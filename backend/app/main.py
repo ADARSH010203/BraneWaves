@@ -14,7 +14,7 @@ from app.config import get_settings
 from app.database import connect_db, connect_redis, disconnect_db, disconnect_redis, get_db, get_redis
 from app.middleware import RequestSizeLimitMiddleware, TraceIDMiddleware
 from app.observability.logger import setup_logging
-from app.routes import auth, files, tasks, ws
+from app.routes import auth, files, tasks, ws, analytics, templates, knowledge_base, memory
 from app.tools.registry import register_all_tools
 
 settings = get_settings()
@@ -33,6 +33,10 @@ async def lifespan(app: FastAPI):
     await connect_redis()
     register_all_tools()
     logger.info("✅ Tools registered")
+    # Seed task templates if collection is empty
+    from app.routes.templates import seed_templates
+    await seed_templates()
+    logger.info("✅ Templates checked/seeded")
     yield
     await disconnect_redis()
     await disconnect_db()
@@ -49,6 +53,8 @@ app = FastAPI(
 )
 
 # ── Middleware (order matters — outermost first) ─────────────────────────────
+from starlette.middleware.sessions import SessionMiddleware
+app.add_middleware(SessionMiddleware, secret_key=settings.JWT_SECRET_KEY)
 app.add_middleware(TraceIDMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(
@@ -63,6 +69,10 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(tasks.router, prefix="/tasks", tags=["Tasks"])
 app.include_router(files.router, prefix="/files", tags=["Files"])
+app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
+app.include_router(templates.router, prefix="/templates", tags=["Templates"])
+app.include_router(knowledge_base.router, prefix="/knowledge-base", tags=["Knowledge Base"])
+app.include_router(memory.router, prefix="/memory", tags=["Memory Graph"])
 app.include_router(ws.router, tags=["WebSocket"])
 
 

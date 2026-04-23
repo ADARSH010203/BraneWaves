@@ -32,6 +32,7 @@ async def register_user(db: AsyncIOMotorDatabase, data: UserCreate) -> tuple[Use
         "email": data.email,
         "name": data.name,
         "hashed_password": hash_password(data.password),
+        "provider": "local",
         "role": "user",
         "plan": "free",
         "usage_quota_usd": 10.0,
@@ -60,6 +61,7 @@ async def register_user(db: AsyncIOMotorDatabase, data: UserCreate) -> tuple[Use
         id=user_id,
         email=data.email,
         name=data.name,
+        provider="local",
         role="user",
         plan="free",
         usage_quota_usd=10.0,
@@ -78,6 +80,11 @@ async def login_user(db: AsyncIOMotorDatabase, data: UserLogin) -> tuple[UserRes
     user = await db.users.find_one({"email": data.email})
     if not user:
         raise ValueError("Invalid email or password")
+
+    # Guard: OAuth users don't have a password — can't use password login
+    if not user.get("hashed_password"):
+        provider = user.get("provider", "social")
+        raise ValueError(f"This account uses {provider} login. Please sign in with {provider}.")
 
     if not verify_password(data.password, user["hashed_password"]):
         raise ValueError("Invalid email or password")
@@ -104,6 +111,62 @@ async def login_user(db: AsyncIOMotorDatabase, data: UserLogin) -> tuple[UserRes
         id=user_id,
         email=user["email"],
         name=user["name"],
+        provider=user.get("provider", "local"),
+        role=user.get("role", "user"),
+        plan=user.get("plan", "free"),
+        usage_quota_usd=user.get("usage_quota_usd", 10.0),
+        created_at=user["created_at"],
+        is_active=user.get("is_active", True),
+    )
+    token_response = TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+    return user_response, token_response
+
+
+async def oauth_login_user(db: AsyncIOMotorDatabase, email: str, name: str, provider: str) -> tuple[UserResponse, TokenResponse]:
+    """Authenticate or register user via OAuth provider."""
+    user = await db.users.find_one({"email": email})
+    now = datetime.now(timezone.utc)
+    
+    if not user:
+        user_id = str(uuid.uuid4())
+        user_doc = {
+            "_id": user_id,
+            "email": email,
+            "name": name,
+            "hashed_password": None,
+            "provider": provider,
+            "role": "user",
+            "plan": "free",
+            "usage_quota_usd": 10.0,
+            "created_at": now,
+            "updated_at": now,
+            "is_active": True,
+        }
+        await db.users.insert_one(user_doc)
+        user = user_doc
+    else:
+        user_id = user["_id"]
+
+    access_token = create_access_token(user_id, user.get("role", "user"))
+    refresh_token = create_refresh_token(user_id)
+
+    session_doc = {
+        "_id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "refresh_token": refresh_token,
+        "created_at": now,
+        "expires_at": now + timedelta(days=7),
+    }
+    await db.sessions.insert_one(session_doc)
+
+    user_response = UserResponse(
+        id=user_id,
+        email=user["email"],
+        name=user["name"],
+        provider=user.get("provider", "local"),
         role=user.get("role", "user"),
         plan=user.get("plan", "free"),
         usage_quota_usd=user.get("usage_quota_usd", 10.0),

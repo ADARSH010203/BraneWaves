@@ -68,16 +68,43 @@ Generate the code and explain what it does. Output as JSON.""",
 
         output = await self.parse_json_response(result["content"])
 
-        # Execute code in sandbox if provided
+        # Execute code in sandbox if provided — with retry loop
         code = output.get("code", "")
         if code:
-            try:
-                sandbox_result = await self.execute_tool("python_sandbox", {"code": code})
-                output["execution_result"] = sandbox_result.get("output", "")
-                output["success"] = sandbox_result.get("success", False)
-            except Exception as e:
-                output["execution_result"] = f"Sandbox execution failed: {e}"
-                output["success"] = False
+            current_messages = list(messages)
+            for attempt in range(3):
+                try:
+                    sandbox_result = await self.execute_tool("python_sandbox", {"code": code})
+                    execution_output = sandbox_result.get("output", "")
+                    success = sandbox_result.get("success", False)
+                    output["execution_result"] = execution_output
+                    output["success"] = success
+                    if success:
+                        break
+                    # Code ran but failed — ask LLM to fix
+                    if attempt < 2:
+                        import logging
+                        logging.getLogger("arc.agents.code").info(
+                            "Code attempt %d failed for step %s, retrying with LLM fix",
+                            attempt + 1, self.step_id
+                        )
+                        current_messages.append({"role": "assistant", "content": result["content"]})
+                        current_messages.append({
+                            "role": "user",
+                            "content": f"The code failed with this error:\n\n{execution_output}\n\nPlease fix the code and return the corrected version as JSON."
+                        })
+                        result = await self.call_llm(
+                            current_messages,
+                            temperature=0.1,
+                            max_tokens=4096,
+                            response_format={"type": "json_object"},
+                        )
+                        output = await self.parse_json_response(result["content"])
+                        code = output.get("code", code)
+                except Exception as e:
+                    output["execution_result"] = f"Sandbox execution failed: {e}"
+                    output["success"] = False
+                    break
 
         output["tokens"] = result["tokens"]
         output["cost_usd"] = result["cost_usd"]

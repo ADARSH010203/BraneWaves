@@ -124,7 +124,7 @@ async def get_task_steps(db: AsyncIOMotorDatabase, task_id: str, user_id: str) -
     # Verify task belongs to user
     task = await db.tasks.find_one({"_id": task_id, "user_id": user_id})
     if not task:
-        return []
+        return None  # BUG-02 FIX: was returning [] — route checks None for 404
 
     cursor = db.task_steps.find({"task_id": task_id}).sort("order", 1)
     steps = await cursor.to_list(length=200)
@@ -180,6 +180,63 @@ async def get_task_result(db: AsyncIOMotorDatabase, task_id: str, user_id: str) 
         }
 
     return result
+
+
+
+async def cancel_task(db: AsyncIOMotorDatabase, task_id: str, user_id: str) -> tuple[bool, str]:
+    """
+    Cancel a running or planning task.
+
+    Sets a Redis cancel flag that the orchestrator checks before each step,
+    updates MongoDB status, and publishes a cancellation event.
+
+    Returns:
+        (success, message) tuple.
+    """
+    task = await db.tasks.find_one({"_id": task_id, "user_id": user_id})
+    if not task:
+        return False, "Task not found"
+
+    cancellable = {TaskStatus.RUNNING.value, TaskStatus.PLANNING.value, TaskStatus.PENDING.value}
+    if task["status"] not in cancellable:
+        return False, f"Cannot cancel task with status '{task['status']}'. Only running, planning, or pending tasks can be cancelled."
+
+    now = datetime.now(timezone.utc)
+
+    # Set Redis cancel flag — orchestrator checks this before each step
+    try:
+        redis = get_redis()
+        await redis.set(f"task:{task_id}:cancel", "1", ex=3600)
+        logger.info("Cancel flag set in Redis for task %s", task_id)
+    except Exception as e:
+        logger.warning("Could not set Redis cancel flag for task %s: %s", task_id, e)
+
+    # Update task status in MongoDB
+    await db.tasks.update_one(
+        {"_id": task_id},
+        {"$set": {
+            "status": TaskStatus.CANCELLED.value,
+            "error": "Task cancelled by user",
+            "updated_at": now,
+        }},
+    )
+
+    # Publish cancellation event for WebSocket streaming
+    try:
+        redis = get_redis()
+        payload = json.dumps({
+            "event": "task_status",
+            "task_id": task_id,
+            "status": "cancelled",
+            "timestamp": now.isoformat(),
+            "message": "Task cancelled by user",
+        })
+        await redis.publish(f"task:{task_id}", payload)
+        logger.info("Cancellation event published for task %s", task_id)
+    except Exception as e:
+        logger.warning("Could not publish cancel event for task %s: %s", task_id, e)
+
+    return True, "Task cancellation requested"
 
 
 def _doc_to_response(doc: dict) -> TaskResponse:

@@ -17,6 +17,8 @@ SUPPORTED_TYPES = {
     "text/csv": "csv",
     "application/json": "json",
     "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/msword": "doc",
 }
 
 
@@ -42,6 +44,13 @@ async def extract_text(file_bytes: bytes, content_type: str, filename: str) -> s
     # PDF
     if content_type == "application/pdf" or ext == "pdf":
         return _extract_pdf(file_bytes)
+
+    # DOCX / DOC
+    if content_type in (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    ) or ext in ("docx", "doc"):
+        return _extract_docx(file_bytes)
 
     # Fallback: try as text
     try:
@@ -77,3 +86,24 @@ def _extract_pdf(file_bytes: bytes) -> str:
     except ImportError:
         logger.warning("No PDF library available. Install pdfplumber or PyPDF2.")
         return "[PDF content - extraction library not available]"
+
+
+def _extract_docx(file_bytes: bytes) -> str:
+    """Extract text from DOCX bytes using python-docx."""
+    try:
+        from docx import Document
+        doc = Document(io.BytesIO(file_bytes))
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        table_rows = []
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = " | ".join(c.text.strip() for c in row.cells if c.text.strip())
+                if row_text:
+                    table_rows.append(row_text)
+        return "\n\n".join(paragraphs) + ("\n\n" + "\n".join(table_rows) if table_rows else "")
+    except ImportError:
+        logger.warning("python-docx not installed")
+        return "[DOCX - install python-docx]"
+    except Exception as e:
+        logger.error("DOCX extraction failed: %s", e)
+        return ""

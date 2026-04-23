@@ -69,6 +69,8 @@ export interface TaskStep {
     error?: string;
     started_at?: string;
     completed_at?: string;
+    output_data?: Record<string, any>;
+    tokens?: number;
 }
 
 export interface TaskListResponse {

@@ -137,8 +137,21 @@ export default function LoginPage() {
             <div className="relative">
               <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/5" /></div>
               <div className="relative flex justify-center text-xs">
-                <span className="bg-slate-900/60 px-3 text-slate-500">or</span>
+                <span className="bg-slate-900/60 px-3 text-slate-500">or continue with</span>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <button type="button" onClick={() => window.location.href = "http://localhost:8000/auth/google/login"}
+                className="btn-ghost py-2.5 flex items-center justify-center gap-2 text-sm border border-white/10 hover:bg-white/5 transition-colors text-slate-300">
+                <svg className="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 18 19"><path fillRule="evenodd" d="M8.842 18.083a8.8 8.8 0 0 1-8.65-8.948 8.841 8.841 0 0 1 8.8-8.652h.153a8.439 8.439 0 0 1 5.8 2.312l-2.117 2.115a5.622 5.622 0 0 0-3.696-1.398 5.736 5.736 0 0 0-5.69 5.619 5.742 5.742 0 0 0 5.69 5.619 5.419 5.419 0 0 0 5.37-4.275h-5.46v-3.08h8.568a8.04 8.04 0 0 1 .15 1.83 8.354 8.354 0 0 1-8.524 8.775Z" clipRule="evenodd"/></svg>
+                Google
+              </button>
+              <button type="button" onClick={() => window.location.href = "http://localhost:8000/auth/github/login"}
+                className="btn-ghost py-2.5 flex items-center justify-center gap-2 text-sm border border-white/10 hover:bg-white/5 transition-colors text-slate-300">
+                <svg className="w-5 h-5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24"><path fillRule="evenodd" d="M12.006 2a9.847 9.847 0 0 0-6.484 2.44 10.32 10.32 0 0 0-3.393 6.17 10.48 10.48 0 0 0 1.317 6.955 10.045 10.045 0 0 0 5.4 4.418c.504.095.683-.223.683-.494 0-.245-.01-1.052-.014-2.108-2.788.62-3.392-1.378-3.392-1.378-.458-1.183-1.12-1.498-1.12-1.498-.916-.64.07-.627.07-.627 1.014.073 1.547 1.062 1.547 1.062.9 1.566 2.363 1.113 2.936.851.092-.666.354-1.113.645-1.369-2.227-.26-4.569-1.135-4.569-5.045 0-1.115.39-2.029 1.03-2.747-.103-.26-.447-1.3.098-2.71 0 0 .84-.275 2.75 1.048a9.256 9.256 0 0 1 2.503-.342 9.278 9.278 0 0 1 2.503.342c1.908-1.323 2.747-1.048 2.747-1.048.547 1.41.203 2.45.1 2.71.643.718 1.03 1.632 1.03 2.747 0 3.92-2.345 4.78-4.58 5.034.364.319.688.948.688 1.912 0 1.38-.012 2.493-.012 2.833 0 .273.18.596.69.492a10.05 10.05 0 0 0 5.392-4.417 10.47 10.47 0 0 0 1.317-6.957 10.316 10.316 0 0 0-3.393-6.17A9.847 9.847 0 0 0 12.006 2Z" clipRule="evenodd"/></svg>
+                GitHub
+              </button>
             </div>
 
             <p className="text-center text-sm text-slate-400">

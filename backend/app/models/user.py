@@ -42,7 +42,8 @@ class UserDoc(BaseModel):
     id: str = Field(alias="_id")
     email: str
     name: str
-    hashed_password: str
+    hashed_password: Optional[str] = None
+    provider: str = "local"
     role: UserRole = UserRole.USER
     plan: PlanTier = PlanTier.FREE
     usage_quota_usd: float = 10.0
@@ -58,6 +59,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     name: str
+    provider: str
     role: UserRole
     plan: PlanTier
     usage_quota_usd: float

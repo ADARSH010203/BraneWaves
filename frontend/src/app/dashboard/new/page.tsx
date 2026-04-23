@@ -1,10 +1,11 @@
 /* ─── ARC Platform — Premium New Task Page ────────────────────────────────── */
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTask } from "@/hooks/useTask";
-import { ArrowRight, ArrowLeft, AlertCircle, Rocket, FileText, Settings2, CheckCircle2, X, Sparkles } from "lucide-react";
+import { api } from "@/lib/api";
+import { ArrowRight, ArrowLeft, AlertCircle, Rocket, FileText, Settings2, CheckCircle2, X, Sparkles, Brain } from "lucide-react";
 
 const STEPS = [
   { label: "Describe", icon: FileText, desc: "Define your research objective" },
@@ -22,6 +23,44 @@ export default function NewTaskPage() {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [error, setError] = useState("");
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [memoryResults, setMemoryResults] = useState<any[]>([]);
+
+  useEffect(() => {
+    async function loadTemplates() {
+      try {
+        const res = await api.getTemplates();
+        setTemplates(res.data || []);
+      } catch (err) {
+        console.error("Failed to load templates", err);
+      }
+    }
+    loadTemplates();
+  }, []);
+
+  // Debounced memory search
+  useEffect(() => {
+    if (description.length < 20) {
+      setMemoryResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const data = await api.searchMemory(description);
+        setMemoryResults(data.results.filter((r: any) => r.score > 0.5));
+      } catch {
+        setMemoryResults([]);
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [description]);
+
+  const selectTemplate = (t: any) => {
+    setTitle(t.title);
+    setDescription(t.example_prompts[0] || t.description);
+    setBudget(t.suggested_budget);
+    setTags(t.suggested_tags);
+  };
 
   const addTag = () => {
     const t = tagInput.trim();
@@ -98,7 +137,23 @@ export default function NewTaskPage() {
           transition={{duration:0.3}} className="glass-card p-8">
           
           {step === 0 && (
-            <div className="space-y-6">
+            <div className="space-y-8">
+              {/* Template Selector */}
+              {templates.length > 0 && (
+                <div className="mb-6">
+                  <label className="block text-sm font-bold mb-3 text-white">Start with a Template <span className="text-slate-500 font-normal">(Optional)</span></label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {templates.map(t => (
+                      <div key={t.id} onClick={() => selectTemplate(t)}
+                        className="p-4 rounded-xl border border-white/5 bg-slate-900/50 hover:bg-slate-800 hover:border-brand-500/30 cursor-pointer transition-all group">
+                        <h4 className="font-bold text-slate-200 text-sm group-hover:text-brand-400 transition-colors mb-1">{t.title}</h4>
+                        <p className="text-xs text-slate-500 line-clamp-2">{t.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-bold mb-3 text-white">Research Title</label>
                 <input value={title} onChange={e => setTitle(e.target.value)} className="input-field text-base"
@@ -110,6 +165,22 @@ export default function NewTaskPage() {
                   className="input-field min-h-[180px] text-base" rows={7}
                   placeholder="Describe your research objective in detail. The more specific, the better the agents will perform..." />
                 <p className="text-xs text-slate-500 mt-2">{description.length} characters</p>
+
+                {memoryResults.length > 0 && (
+                  <div className="mt-3 p-3 rounded-xl bg-purple-500/10 border border-purple-500/20">
+                    <p className="text-xs font-medium text-purple-300 mb-2 flex items-center gap-1.5">
+                      <Brain className="h-3.5 w-3.5" />
+                      ARC Brain: {memoryResults.length} related memories found
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {memoryResults.map((m: any, i: number) => (
+                        <span key={i} className="text-xs px-2 py-1 bg-purple-500/10 text-purple-300 rounded-lg border border-purple-500/20">
+                          {m.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex justify-end">
                 <button onClick={() => setStep(1)} disabled={!title || !description}

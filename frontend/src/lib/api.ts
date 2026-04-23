@@ -49,6 +49,8 @@ class ApiClient {
             throw new ApiError(401, "Unauthorized");
         }
 
+        
+
         if (!res.ok) {
             const body = await res.text();
             throw new ApiError(res.status, body);
@@ -93,6 +95,10 @@ class ApiClient {
     }
 
     // ── Tasks ─────────────────────────────────────────────────────────
+    async getTemplates() {
+        return this.request<any>("/templates");
+    }
+
     async createTask(title: string, description: string, budget_usd?: number, tags?: string[]) {
         return this.request<any>("/tasks", {
             method: "POST",
@@ -132,6 +138,103 @@ class ApiClient {
         });
         if (!res.ok) throw new ApiError(res.status, await res.text());
         return res.json();
+    }
+
+    // ── Knowledge Base (FEAT-10) ──────────────────────────────────────
+    async uploadKBFile(file: File) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const token = this.getToken();
+        const res = await fetch(`${this.baseUrl}/knowledge-base/upload`, {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: formData,
+        });
+        if (!res.ok) throw new ApiError(res.status, await res.text());
+        return res.json();
+    }
+
+    async getKBDocuments() {
+        return this.request<any>("/knowledge-base");
+    }
+
+    async deleteKBDocument(id: string) {
+        return this.request<any>(`/knowledge-base/${id}`, { method: "DELETE" });
+    }
+
+    // ── Report Export (FEAT-01) ───────────────────────────────────────
+    async exportReport(taskId: string, format: "pdf" | "docx"): Promise<void> {
+        const token = this.getToken();
+        const res = await fetch(
+            `${this.baseUrl}/tasks/${taskId}/export?format=${format}`,
+            {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+            }
+        );
+        if (!res.ok) {
+            const body = await res.text();
+            throw new ApiError(res.status, body);
+        }
+
+        // Trigger browser download from blob
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+
+        // Extract filename from Content-Disposition or use default
+        const disposition = res.headers.get("Content-Disposition");
+        let filename = `report.${format}`;
+        if (disposition) {
+            const match = disposition.match(/filename="?([^"]+)"?/);
+            if (match) filename = match[1];
+        }
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    }
+
+    // ── Task Cancellation (FEAT-02) ──────────────────────────────────
+    async cancelTask(taskId: string) {
+        return this.request<{ success: boolean; message: string }>(
+            `/tasks/${taskId}/cancel`,
+            { method: "POST" }
+        );
+    }
+
+    // ── Report Chat (FEAT-07) ────────────────────────────────────────
+    async chatWithReport(taskId: string, message: string) {
+        return this.request<{ reply: string }>(`/tasks/${taskId}/chat`, {
+            method: "POST",
+            body: JSON.stringify({ message }),
+        });
+    }
+
+    // ── Analytics (FEAT-06) ──────────────────────────────────────────
+    async getCostAnalytics() {
+        return this.request<any>("/analytics/costs");
+    }
+
+    // ── Memory Graph (ARC Brain) ────────────────────────────────────
+    async getMemoryGraph() {
+        return this.request<{
+            nodes: Array<{ id: string; label: string; type: string; description: string; task_count: number; occurrence_count: number }>;
+            edges: Array<{ id: string; from: string; to: string; weight: number }>;
+            total_nodes: number;
+            total_edges: number;
+        }>("/memory/graph");
+    }
+
+    async searchMemory(query: string) {
+        return this.request<{ results: Array<{ label: string; description: string; task_ids: string[]; score: number }> }>(
+            `/memory/search?query=${encodeURIComponent(query)}`
+        );
+    }
+
+    async deleteMemoryNode(nodeId: string) {
+        return this.request<{ success: boolean }>(`/memory/${nodeId}`, { method: "DELETE" });
     }
 }
 

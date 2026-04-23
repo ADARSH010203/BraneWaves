@@ -54,13 +54,13 @@ def chunk_text(
         chunk_list.append(current_chunk.strip())
 
     # Build chunk documents
-    for i, chunk_text in enumerate(chunk_list):
+    for i, chunk_str in enumerate(chunk_list):
         chunks.append({
             "id": str(uuid.uuid4()),
-            "text": chunk_text,
+            "text": chunk_str,
             "index": i,
-            "char_count": len(chunk_text),
-            "word_count": len(chunk_text.split()),
+            "char_count": len(chunk_str),
+            "word_count": len(chunk_str.split()),
             "metadata": {
                 **metadata,
                 "chunk_index": i,
