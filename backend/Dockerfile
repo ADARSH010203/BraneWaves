@@ -1,4 +1,3 @@
-# Backend Dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -6,19 +5,19 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Python dependencies
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir authlib httpx itsdangerous
 
-# Install CPU-only PyTorch first (much smaller ~200MB vs 1GB GPU version)
-RUN pip install --no-cache-dir --default-timeout=300 \
-    torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining dependencies
-RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt
-
+# Copy application code
 COPY . .
 
+# Expose the API port
 EXPOSE 8000
 
+# Start the FastAPI auto-reloader for dev
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

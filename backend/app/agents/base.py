@@ -35,6 +35,11 @@ class MaxStepsExceededError(Exception):
     pass
 
 
+class TaskCancelledException(Exception):
+    """Raised when a user cancels a running task."""
+    pass
+
+
 class BaseAgent(ABC):
     """
     Abstract base class for all ARC agents.

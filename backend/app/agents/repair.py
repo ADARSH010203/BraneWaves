@@ -52,6 +52,15 @@ Rules:
 **Step Input Data:**
 {str(step.get('input_data', {}))[:3000]}
 
+**IMPORTANT — Expected Output Format by step type:**
+- research: {{ "summary": "...", "key_findings": [...], "citations": [...], "confidence": 0.0-1.0 }}
+- data: {{ "datasets_found": [...], "analysis": "...", "statistics": {{}}, "confidence": 0.0-1.0 }}
+- code: {{ "code": "...", "explanation": "...", "execution_result": "...", "success": true/false, "confidence": 0.0-1.0 }}
+- critique: {{ "confidence": 0.0-1.0, "quality_score": 0.0-1.0, "issues": [...], "verdict": "pass|needs_revision|fail" }}
+- report: {{ "title": "...", "summary": "...", "content": "...", "sections": [...], "confidence": 0.0-1.0 }}
+
+Your corrected_output MUST match the format for step type: {step.get('step_type', 'research')}
+
 Analyse the error and provide a repaired output as JSON.""",
             }
         ]

@@ -57,8 +57,9 @@ Provide a thorough quality assessment as JSON.""",
 
         result = await self.call_llm(
             messages,
+            model="llama-3.1-8b-instant",
             temperature=0.2,
-            max_tokens=2048,
+            max_tokens=1024,
             response_format={"type": "json_object"},
         )
 

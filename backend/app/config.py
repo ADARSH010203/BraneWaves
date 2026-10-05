@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     """Application-wide configuration loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 64
     RAG_TOP_K: int = 10
 
+    # ── Caching ──────────────────────────────────────────────────────────
+    CACHE_TTL_SECONDS: int = 3600
+    ENABLE_AGENT_CACHE: bool = True
+
     # ── Tool Timeouts (seconds) ──────────────────────────────────────────
     TOOL_TIMEOUT_WEB_SEARCH: int = 30
     TOOL_TIMEOUT_PAPER_SEARCH: int = 30
@@ -71,6 +75,12 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_PYTHON_SANDBOX: int = 60
     TOOL_TIMEOUT_VECTOR_SEARCH: int = 15
     TOOL_TIMEOUT_CITATION_VERIFY: int = 20
+
+    # ── OAuth ────────────────────────────────────────────────────────────
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+    GITHUB_CLIENT_ID: str | None = None
+    GITHUB_CLIENT_SECRET: str | None = None
 
 
 @lru_cache

@@ -71,9 +71,26 @@ export function useTask() {
         }
     }, []);
 
+    const cancelTask = useCallback(async (taskId: string) => {
+        setLoading(true);
+        setError(null);
+        try {
+            const data = await api.cancelTask(taskId);
+            // Refetch task to get updated status
+            const updated = await api.getTask(taskId);
+            setCurrentTask(updated);
+            return data;
+        } catch (e: any) {
+            setError(e.message);
+            throw e;
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
     return {
         tasks, total, currentTask, steps, result,
         loading, error,
-        fetchTasks, fetchTask, fetchSteps, fetchResult, createTask,
+        fetchTasks, fetchTask, fetchSteps, fetchResult, createTask, cancelTask,
     };
 }

@@ -1,22 +1,19 @@
-# Frontend Dockerfile
-FROM node:20-alpine AS builder
+FROM node:18-alpine
 
 WORKDIR /app
-COPY package.json ./
-RUN npm install
 
+# Install dependencies based on the preferred package manager
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Copy application code
 COPY . .
-RUN npm run build
 
-FROM node:20-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
+# Next.js telemetry disable
+ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-
-RUN mkdir -p public
-COPY --from=builder /app/public ./public
-
+# Expose the frontend port
 EXPOSE 3000
-CMD ["node", "server.js"]
+
+# Start Next.js development server
+CMD ["npm", "run", "dev"]

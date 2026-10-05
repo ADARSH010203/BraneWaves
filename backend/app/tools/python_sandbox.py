@@ -4,6 +4,7 @@ Executes Python code in a restricted subprocess with resource limits.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import logging
 import textwrap
@@ -17,15 +18,14 @@ from app.tools.base import BaseTool, ToolInput
 logger = logging.getLogger("arc.tools.sandbox")
 settings = get_settings()
 
-# ── Forbidden imports / statements ───────────────────────────────────────────
-FORBIDDEN_PATTERNS = [
-    "import os", "import sys", "import subprocess", "import shutil",
-    "import socket", "import http", "import urllib", "import requests",
-    "__import__", "eval(", "exec(", "compile(", "open(",
-    "os.system", "os.popen", "os.exec", "os.spawn",
-    "shutil.rmtree", "pathlib.Path", "import pathlib",
-    "import signal", "import ctypes", "import multiprocessing",
-]
+# ── Forbidden modules for AST-based checking ────────────────────────────────
+FORBIDDEN_MODULES = {
+    "os", "sys", "subprocess", "shutil", "socket", "http", "urllib",
+    "requests", "signal", "ctypes", "multiprocessing", "pathlib",
+    "importlib", "builtins", "code", "codeop", "compileall",
+}
+
+FORBIDDEN_BUILTINS = {"eval", "exec", "compile", "__import__", "open", "breakpoint"}
 
 
 class PythonSandboxInput(ToolInput):
@@ -48,14 +48,41 @@ class PythonSandboxTool(BaseTool):
         code = params["code"]
         timeout = params.get("timeout", 30)
 
-        # Security: check for forbidden patterns
-        for pattern in FORBIDDEN_PATTERNS:
-            if pattern in code:
-                return {
-                    "success": False,
-                    "error": f"Forbidden code pattern detected: '{pattern}'",
-                    "output": "",
-                }
+        # BUG-07 FIX: AST-based security check instead of string matching
+        # This prevents bypasses like "im" + "port os"
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            return {"success": False, "error": f"Syntax error: {e}", "output": ""}
+
+        for node in ast.walk(tree):
+            # Check imports
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    mod_root = alias.name.split(".")[0]
+                    if mod_root in FORBIDDEN_MODULES:
+                        return {
+                            "success": False,
+                            "error": f"Forbidden import: {alias.name}",
+                            "output": "",
+                        }
+            if isinstance(node, ast.ImportFrom):
+                if node.module:
+                    mod_root = node.module.split(".")[0]
+                    if mod_root in FORBIDDEN_MODULES:
+                        return {
+                            "success": False,
+                            "error": f"Forbidden import: {node.module}",
+                            "output": "",
+                        }
+            # Check dangerous builtins (eval, exec, compile, open, __import__)
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_BUILTINS:
+                    return {
+                        "success": False,
+                        "error": f"Forbidden call: {node.func.id}()",
+                        "output": "",
+                    }
 
         # Wrap code to capture output
         wrapped = textwrap.dedent(f"""
@@ -83,6 +110,7 @@ except Exception as e:
 _original_print("\\n".join(_output_lines))
 """)
 
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "python", "-c", wrapped,
@@ -107,6 +135,13 @@ _original_print("\\n".join(_output_lines))
             }
 
         except asyncio.TimeoutError:
+            # BUG-04 FIX: Kill zombie process on timeout
+            if proc:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
             return {
                 "success": False,
                 "error": f"Code execution timed out after {timeout}s",

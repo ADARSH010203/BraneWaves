@@ -110,6 +110,10 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.files.create_index("user_id")
     await db.files.create_index([("user_id", 1), ("filename", 1)])
 
+    # Chunks (RAG)
+    await db.chunks.create_index([("user_id", 1), ("file_id", 1)])
+    await db.chunks.create_index("user_id")
+
     # Citations
     await db.citations.create_index("report_id")
     await db.citations.create_index("task_id")
@@ -123,5 +127,12 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
 
     # Prompt Versions
     await db.prompt_versions.create_index([("agent_type", 1), ("version", -1)])
+
+    # Memory Graph
+    await db.memory_nodes.create_index([("user_id", 1), ("label", 1)])
+    await db.memory_nodes.create_index("user_id")
+    await db.memory_nodes.create_index([("user_id", 1), ("occurrence_count", -1)])
+    await db.memory_edges.create_index([("user_id", 1), ("from_node_id", 1)])
+    await db.memory_edges.create_index([("user_id", 1), ("to_node_id", 1)])
 
     logger.info("MongoDB indexes ensured")

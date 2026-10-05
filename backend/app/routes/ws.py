@@ -63,18 +63,21 @@ async def task_stream(websocket: WebSocket, task_id: str):
     await pubsub.subscribe(channel)
 
     try:
-        while True:
-            # Check for Redis messages
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
-            if message and message["type"] == "message":
+        # BUG-10 FIX: Use async for loop instead of polling with sleep
+        async for message in pubsub.listen():
+            if message["type"] == "message":
                 data = message["data"]
-                if isinstance(data, str):
-                    await websocket.send_text(data)
-                elif isinstance(data, bytes):
-                    await websocket.send_text(data.decode())
+                if isinstance(data, bytes):
+                    data = data.decode()
+                await websocket.send_text(data)
 
-            # Small sleep to prevent busy loop
-            await asyncio.sleep(0.1)
+                # BUG-03 FIX: Close connection when task completes or fails
+                try:
+                    parsed = json.loads(data)
+                    if parsed.get("event") == "task_status" and parsed.get("status") in ("completed", "failed", "cancelled"):
+                        break
+                except json.JSONDecodeError:
+                    pass
 
     except WebSocketDisconnect:
         logger.info("WS disconnected: user=%s task=%s", user_id, task_id)

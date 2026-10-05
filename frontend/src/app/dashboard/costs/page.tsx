@@ -1,42 +1,66 @@
-/* ─── ARC Platform — Premium Cost Dashboard ───────────────────────────────── */
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { useTask } from "@/hooks/useTask";
+import { 
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, 
+  PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Legend 
+} from "recharts";
+import { api } from "@/lib/api";
+import { Activity, DollarSign, Cpu, History } from "lucide-react";
+import { DashboardSkeleton } from "@/components/skeletons/DashboardSkeleton";
 import { formatCost } from "@/lib/utils";
-import { BarChart3, DollarSign, Cpu, TrendingUp, Sparkles, Wallet } from "lucide-react";
 
-export default function CostDashboard() {
-  const { tasks, fetchTasks } = useTask();
-  useEffect(() => { fetchTasks(); }, [fetchTasks]);
+export default function CostsDashboardPage() {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<any>(null);
 
-  const totalCost = tasks.reduce((s, t) => s + (t.budget?.spent_usd || 0), 0);
-  const totalBudget = tasks.reduce((s, t) => s + (t.budget?.max_usd || 0), 0);
-  const totalSteps = tasks.reduce((s, t) => s + (t.budget?.steps_used || 0), 0);
-  const utilization = totalBudget > 0 ? (totalCost / totalBudget) * 100 : 0;
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const response = await api.getCostAnalytics();
+        setData(response.data);
+      } catch (err) {
+        console.error("Failed to load analytics:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
+  if (loading) return <DashboardSkeleton />;
+
+  if (!data) return (
+    <div className="flex flex-col items-center justify-center py-32 text-center">
+      <Activity className="h-12 w-12 text-slate-600 mb-4" />
+      <h2 className="text-xl font-bold text-white mb-2">No Data Available</h2>
+      <p className="text-slate-400">Run some agents to generate cost analytics.</p>
+    </div>
+  );
 
   const stats = [
-    { icon: DollarSign, label: "Total Spent", value: formatCost(totalCost), color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
-    { icon: TrendingUp, label: "Total Budget", value: formatCost(totalBudget), color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-    { icon: BarChart3, label: "Tasks Run", value: tasks.length, color: "text-brand-400", bg: "bg-brand-500/10", border: "border-brand-500/20" },
-    { icon: Cpu, label: "Agent Steps", value: totalSteps, color: "text-sky-400", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+    { label: "Total Spent", value: formatCost(data.total_spent_usd), icon: DollarSign, color: "text-amber-400", bg: "bg-amber-500/10" },
+    { label: "Avg Per Task", value: formatCost(data.tasks_comparison?.length ? data.total_spent_usd / data.tasks_comparison.length : 0), icon: Activity, color: "text-brand-400", bg: "bg-brand-500/10" },
+    { label: "Active Models", value: data.agent_breakdown?.length || 0, icon: Cpu, color: "text-sky-400", bg: "bg-sky-500/10" },
+    { label: "Total Runs", value: data.agent_breakdown?.reduce((sum: number, a: any) => sum + a.runs, 0) || 0, icon: History, color: "text-purple-400", bg: "bg-purple-500/10" },
   ];
 
-  return (
-    <div className="animate-fade-in">
-      <div className="flex items-center gap-3 mb-2">
-        <Wallet className="h-6 w-6 text-brand-400" />
-        <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">Cost Analytics</h1>
-      </div>
-      <p className="text-slate-400 text-lg mb-10">Track token spending and budget utilization across all deployments.</p>
+  const pieColors = ["#3b82f6", "#10b981", "#8b5cf6", "#f43f5e", "#f59e0b", "#06b6d4"];
 
-      {/* Premium Stat Cards */}
+  return (
+    <div className="animate-fade-in relative z-10 w-full max-w-7xl mx-auto">
+      <div className="mb-10">
+        <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-white mb-2 flex items-center gap-3">
+          Cost Analytics <DollarSign className="h-6 w-6 text-brand-400" />
+        </h1>
+        <p className="text-slate-400">Analyze LLM token usage and spending patterns across all agents.</p>
+      </div>
+
+      {/* Summary Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-10">
         {stats.map((s, i) => (
-          <motion.div key={s.label} initial={{opacity:0, y:20}} animate={{opacity:1, y:0}}
-            transition={{delay: i * 0.1, duration: 0.5}}
-            className={`glass-card p-6 border ${s.border} relative overflow-hidden group`}>
-            <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+          <motion.div key={s.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
+            className="glass-card p-6 border border-white/5 relative overflow-hidden group">
             <div className="flex flex-col gap-4 relative z-10">
               <div className={`w-12 h-12 rounded-xl ${s.bg} flex items-center justify-center`}>
                 <s.icon className={`h-6 w-6 ${s.color}`} />
@@ -50,75 +74,99 @@ export default function CostDashboard() {
         ))}
       </div>
 
-      {/* Budget Utilization Bar */}
-      <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}} transition={{delay:0.4}}
-        className="glass-card p-6 mb-10">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-bold text-white flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-emerald-400" /> Overall Budget Utilization
-          </h2>
-          <span className="text-2xl font-black text-white">{utilization.toFixed(1)}%</span>
-        </div>
-        <div className="h-4 rounded-full bg-slate-800 overflow-hidden">
-          <motion.div initial={{width:0}} animate={{width: `${Math.min(100, utilization)}%`}}
-            transition={{duration:1.5, ease:"easeOut"}}
-            className={`h-full rounded-full ${
-              utilization > 80 ? "bg-gradient-to-r from-red-500 to-orange-500" :
-              utilization > 50 ? "bg-gradient-to-r from-amber-500 to-yellow-500" :
-              "bg-gradient-to-r from-emerald-500 to-cyan-500"
-            }`} />
-        </div>
-        <div className="flex justify-between text-xs text-slate-500 mt-2">
-          <span>$0.00</span><span>{formatCost(totalBudget)}</span>
+      <div className="grid lg:grid-cols-2 gap-8 mb-8">
+        {/* Daily Trend */}
+        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }}
+          className="glass-card p-6 border border-white/5">
+          <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+            <Activity className="h-5 w-5 text-brand-400" /> Daily Spending Trend (Last 30 Days)
+          </h3>
+          <div className="h-[300px]">
+             <ResponsiveContainer width="100%" height="100%">
+               <AreaChart data={data.daily_trend}>
+                 <defs>
+                   <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
+                     <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
+                     <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                   </linearGradient>
+                 </defs>
+                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                 <XAxis dataKey="date" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(str) => str.split("-").slice(1).join("/")} />
+                 <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val}`} />
+                 <Tooltip 
+                   contentStyle={{ backgroundColor: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }}
+                   itemStyle={{ color: "#e2e8f0" }}
+                   formatter={(val: number) => [`$${val.toFixed(4)}`, "Cost"]}
+                 />
+                 <Area type="monotone" dataKey="cost" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorCost)" />
+               </AreaChart>
+             </ResponsiveContainer>
+          </div>
+        </motion.div>
+
+        {/* Agent Breakdown */}
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }}
+          className="glass-card p-6 border border-white/5">
+          <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+            <PieChart className="h-5 w-5 text-purple-400" /> Cost By Agent Type
+          </h3>
+          <div className="h-[300px] flex items-center justify-center">
+             {data.agent_breakdown?.length > 0 ? (
+               <ResponsiveContainer width="100%" height="100%">
+                 <PieChart>
+                   <Pie
+                     data={data.agent_breakdown}
+                     cx="50%"
+                     cy="50%"
+                     innerRadius={80}
+                     outerRadius={110}
+                     paddingAngle={5}
+                     dataKey="value"
+                   >
+                     {data.agent_breakdown.map((_: any, index: number) => (
+                       <Cell key={`cell-${index}`} fill={pieColors[index % pieColors.length]} />
+                     ))}
+                   </Pie>
+                   <Tooltip 
+                     contentStyle={{ backgroundColor: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }}
+                     formatter={(val: number) => [`$${val.toFixed(4)}`, "Total Cost"]}
+                   />
+                   <Legend verticalAlign="bottom" height={36} />
+                 </PieChart>
+               </ResponsiveContainer>
+             ) : (
+               <p className="text-slate-500">No agent data available</p>
+             )}
+          </div>
+        </motion.div>
+      </div>
+
+      {/* Task Comparison Bar Chart */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
+        className="glass-card p-6 border border-white/5">
+        <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+          <History className="h-5 w-5 text-sky-400" /> Recent Workflow Costs
+        </h3>
+        <div className="h-[350px]">
+           <ResponsiveContainer width="100%" height="100%">
+             <BarChart data={data.tasks_comparison} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={true} vertical={false} />
+               <XAxis type="number" stroke="#64748b" tickFormatter={(val) => `$${val}`} />
+               <YAxis dataKey="task" type="category" width={150} stroke="#cbd5e1" fontSize={12} tickLine={false} axisLine={false} />
+               <Tooltip 
+                 cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                 contentStyle={{ backgroundColor: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px" }}
+                 formatter={(val: number) => [`$${val.toFixed(4)}`, "Cost"]}
+               />
+               <Bar dataKey="cost" fill="#3b82f6" radius={[0, 4, 4, 0]}>
+                 {data.tasks_comparison?.map((entry: any, index: number) => (
+                    <Cell key={`cell-${index}`} fill={entry.status === 'completed' ? '#10b981' : entry.status === 'failed' ? '#ef4444' : '#3b82f6'} />
+                 ))}
+               </Bar>
+             </BarChart>
+           </ResponsiveContainer>
         </div>
       </motion.div>
-
-      {/* Per-Task Breakdown */}
-      <div className="glass-card overflow-hidden">
-        <div className="px-6 py-5 border-b border-white/10 bg-slate-900/50 flex items-center gap-3">
-          <BarChart3 className="h-5 w-5 text-brand-400" />
-          <h2 className="font-bold text-white">Per-Task Cost Breakdown</h2>
-        </div>
-
-        {tasks.length === 0 ? (
-          <div className="p-16 text-center">
-            <Sparkles className="h-12 w-12 text-slate-600 mx-auto mb-4" />
-            <h3 className="text-lg font-bold text-white mb-2">No cost data yet</h3>
-            <p className="text-slate-400">Create and run tasks to see spending analytics here.</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-white/5">
-            {tasks.map((task, i) => {
-              const spent = task.budget?.spent_usd || 0;
-              const max = task.budget?.max_usd || 1;
-              const pct = (spent / max) * 100;
-              return (
-                <motion.div key={task.id} initial={{opacity:0}} animate={{opacity:1}} transition={{delay: i * 0.05}}
-                  className="px-6 py-5 flex items-center gap-6 hover:bg-slate-800/30 transition-colors">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-sm text-slate-200 truncate">{task.title}</p>
-                    <p className="text-xs text-slate-500 mt-0.5 capitalize">{task.status}</p>
-                  </div>
-                  <div className="text-right shrink-0 w-24">
-                    <p className="text-sm font-black text-white">{formatCost(spent)}</p>
-                    <p className="text-xs text-slate-500">of {formatCost(max)}</p>
-                  </div>
-                  <div className="w-32 shrink-0">
-                    <div className="h-2.5 rounded-full bg-slate-800 overflow-hidden">
-                      <div className={`h-full rounded-full transition-all duration-700 ${
-                        pct > 80 ? "bg-gradient-to-r from-red-500 to-orange-500" :
-                        pct > 50 ? "bg-gradient-to-r from-amber-500 to-yellow-400" :
-                        "bg-gradient-to-r from-brand-500 to-cyan-500"
-                      }`} style={{ width: `${Math.min(100, pct)}%` }} />
-                    </div>
-                    <p className="text-[10px] text-slate-500 text-right mt-1">{pct.toFixed(0)}%</p>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

@@ -56,8 +56,8 @@ async def retrieve_chunks(
     cursor = db.chunks.find(
         filter_query,
         {"_id": 1, "text": 1, "file_id": 1, "embedding": 1, "metadata": 1, "index": 1},
-    )
-    candidates = await cursor.to_list(length=10000)
+    ).limit(3000)
+    candidates = await cursor.to_list(length=3000)
 
     if not candidates:
         return []

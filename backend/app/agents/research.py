@@ -8,6 +8,13 @@ from typing import Any
 
 from app.agents.base import BaseAgent
 from app.models.agent import AgentType
+from app.database import get_redis
+from app.config import get_settings
+import hashlib
+import json
+import logging
+
+logger = logging.getLogger("arc.agents.research")
 
 
 class ResearchAgent(BaseAgent):
@@ -91,6 +98,28 @@ Provide a comprehensive research summary as JSON.""",
             }
         ]
 
+        settings = get_settings()
+        cache_key = None
+        redis_client = get_redis()
+
+        if settings.ENABLE_AGENT_CACHE:
+            prompt_text = messages[0]["content"] if messages else description
+            hash_input = f"{prompt_text}_{settings.GROQ_MODEL}"
+            cache_key = f"cache:agent:research:{hashlib.sha256(hash_input.encode()).hexdigest()}"
+            
+            try:
+                cached_run = await redis_client.get(cache_key)
+                if cached_run:
+                    logger.info("Cache hit for research agent: cache_key=%s task_id=%s", cache_key, self.task_id)
+                    cached_data = json.loads(cached_run)
+                    output = await self.parse_json_response(cached_data["content"])
+                    output["tokens"] = cached_data.get("tokens", 0)
+                    output["cost_usd"] = cached_data.get("cost_usd", 0.0)
+                    output["cache_hit"] = True
+                    return output
+            except Exception as e:
+                logger.warning("Cache check failed: %s", e)
+
         result = await self.call_llm(
             messages,
             temperature=0.3,
@@ -98,7 +127,14 @@ Provide a comprehensive research summary as JSON.""",
             response_format={"type": "json_object"},
         )
 
+        if settings.ENABLE_AGENT_CACHE and cache_key:
+            try:
+                await redis_client.set(cache_key, json.dumps(result), ex=settings.CACHE_TTL_SECONDS)
+            except Exception as e:
+                logger.warning("Cache set failed: %s", e)
+
         output = await self.parse_json_response(result["content"])
         output["tokens"] = result["tokens"]
         output["cost_usd"] = result["cost_usd"]
+        output["cache_hit"] = False
         return output

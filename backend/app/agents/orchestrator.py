@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from app.agents.base import BaseAgent, BudgetExceededError, MaxStepsExceededError
+from app.agents.base import BaseAgent, BudgetExceededError, MaxStepsExceededError, TaskCancelledException
 from app.agents.planner import PlannerAgent
 from app.agents.research import ResearchAgent
 from app.agents.data import DataAgent
@@ -133,12 +133,22 @@ class TaskOrchestrator:
                 "created_at": datetime.now(timezone.utc),
             })
 
+        # BUG-01 FIX: Resolve planner's string indices to actual UUIDs
+        idx_to_uuid = {str(i): s["_id"] for i, s in enumerate(step_docs)}
+        for s in step_docs:
+            s["depends_on"] = [idx_to_uuid[d] for d in s["depends_on"] if d in idx_to_uuid]
+
         if step_docs:
             await db.task_steps.insert_many(step_docs)
 
         # ── Phase 2: Execution ───────────────────────────────────────────
         try:
+            await self._check_cancellation()
             await self._execute_steps(step_docs)
+        except TaskCancelledException:
+            logger.info("Task %s cancelled by user", self.task_id)
+            await self._cancel_task()
+            return {"status": "cancelled", "task_id": self.task_id}
         except (BudgetExceededError, MaxStepsExceededError) as e:
             await self._fail_task(str(e))
             return {"error": str(e)}
@@ -171,6 +181,9 @@ class TaskOrchestrator:
         max_usd = budget.get("max_usd", settings.MAX_TASK_BUDGET_USD)
 
         while len(self._steps_completed) < len(step_docs):
+            # Check for cancellation before each batch
+            await self._check_cancellation()
+
             # Check budget
             if self._total_cost >= max_usd:
                 raise BudgetExceededError(f"Task budget exceeded: ${self._total_cost:.4f} >= ${max_usd:.2f}")
@@ -209,6 +222,9 @@ class TaskOrchestrator:
 
     async def _execute_single_step(self, step: dict) -> dict[str, Any]:
         """Execute a single step with the appropriate agent."""
+        # Check for cancellation before each individual step
+        await self._check_cancellation()
+
         db = get_db()
         sid = step["_id"]
         agent_type = step.get("agent_type", AgentType.RESEARCH.value)
@@ -263,6 +279,27 @@ class TaskOrchestrator:
                 confidence = critic_result.get("confidence", confidence)
                 output["critic_feedback"] = critic_result
 
+                # Trigger repair if critic verdict is bad
+                critic_verdict = critic_result.get("verdict", "pass")
+                if critic_verdict in ("fail", "needs_revision") and confidence < 0.45:
+                    logger.warning(
+                        "Critic flagged step %s as '%s' (confidence=%.2f). Attempting repair.",
+                        sid, critic_verdict, confidence
+                    )
+                    await self._emit_event("step_status", {
+                        "step_id": sid,
+                        "status": "critic_repair",
+                        "verdict": critic_verdict,
+                        "confidence": confidence,
+                    })
+                    repair_error = critic_result.get("feedback", f"Critic verdict: {critic_verdict}")
+                    repaired = await self._attempt_repair(step, repair_error)
+                    if repaired:
+                        repaired_step = await db.task_steps.find_one({"_id": sid})
+                        if repaired_step and repaired_step.get("output_data"):
+                            output = repaired_step["output_data"]
+                            confidence = 0.6
+
             await agent.complete_run(output, confidence=confidence)
             self._total_cost += agent._total_cost
 
@@ -275,6 +312,12 @@ class TaskOrchestrator:
                     "cost_usd": agent._total_cost,
                     "completed_at": datetime.now(timezone.utc),
                 }},
+            )
+
+            # BUG-06 FIX: Update budget.spent_usd in task document
+            await db.tasks.update_one(
+                {"_id": self.task_id},
+                {"$inc": {"budget.spent_usd": agent._total_cost, "budget.steps_used": 1}},
             )
             await self._emit_event("step_status", {
                 "step_id": sid,
@@ -397,9 +440,68 @@ class TaskOrchestrator:
             )
             await self._emit_event("report_generated", {"report_id": report_id})
 
+            # Trigger MemoryAgent to extract and store knowledge graph nodes
+            try:
+                from app.agents.memory import MemoryAgent
+                memory_agent = MemoryAgent(
+                    task_id=self.task_id,
+                    step_id="memory",
+                    user_id=self.user_id,
+                    budget_usd=0.05,
+                )
+                memory_input = {
+                    "report_content": report.get("content", ""),
+                    "report_summary": report.get("summary", ""),
+                    "task_id": self.task_id,
+                }
+                await memory_agent.start_run(memory_input)
+                memory_result = await memory_agent.run(memory_input)
+                await memory_agent.complete_run(memory_result)
+                self._total_cost += memory_agent._total_cost
+                logger.info("MemoryAgent completed: %s", memory_result)
+            except Exception as e:
+                import traceback
+                logger.error("MemoryAgent failed (non-critical) with exception: %s\n%s", e, traceback.format_exc())
+
         except Exception as e:
             await report_agent.complete_run({}, status=AgentRunStatus.FAILED, error=str(e))
             logger.error("Report generation failed for task %s: %s", self.task_id, e)
+
+    async def _check_cancellation(self) -> None:
+        """Check Redis for cancellation flag. Raises TaskCancelledException if set."""
+        try:
+            redis = get_redis()
+            cancel_flag = await redis.get(f"task:{self.task_id}:cancel")
+            if cancel_flag == "1":
+                raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+        except TaskCancelledException:
+            raise
+        except Exception as e:
+            # Redis unavailable — also check MongoDB status as fallback
+            logger.warning("Could not check Redis cancel flag: %s", e)
+            db = get_db()
+            task = await db.tasks.find_one({"_id": self.task_id}, {"status": 1})
+            if task and task.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+
+    async def _cancel_task(self) -> None:
+        """Mark task as cancelled."""
+        db = get_db()
+        await db.tasks.update_one(
+            {"_id": self.task_id},
+            {"$set": {
+                "status": TaskStatus.CANCELLED.value,
+                "error": "Task cancelled by user",
+                "updated_at": datetime.now(timezone.utc),
+            }},
+        )
+        await self._emit_event("task_status", {"status": "cancelled", "message": "Task cancelled by user"})
+
+        # Mark any pending/running steps as skipped
+        await db.task_steps.update_many(
+            {"task_id": self.task_id, "status": {"$in": ["pending", "running"]}},
+            {"$set": {"status": "skipped"}},
+        )
 
     async def _fail_task(self, error: str) -> None:
         """Mark task as failed."""

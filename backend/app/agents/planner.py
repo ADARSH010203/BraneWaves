@@ -4,10 +4,13 @@ Decomposes a complex research task into a dependency DAG of executable steps.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.agents.base import BaseAgent
 from app.models.agent import AgentType
+
+logger = logging.getLogger("arc.agents.planner")
 
 
 class PlannerAgent(BaseAgent):
@@ -54,6 +57,19 @@ Rules:
         title = input_data.get("title", "")
         description = input_data.get("description", "")
 
+        # Search memory graph for related previous research
+        memory_context = ""
+        try:
+            from app.agents.memory import search_memory_graph
+            related_memories = await search_memory_graph(self.user_id, f"{title} {description}", top_k=5)
+            if related_memories:
+                memory_context = "\n\n## Relevant previous research (from memory graph):\n"
+                for mem in related_memories:
+                    memory_context += f"- **{mem['label']}**: {mem['description']} (used in {len(mem['task_ids'])} previous tasks)\n"
+                memory_context += "\nUse this context to avoid re-researching known facts. Focus on new angles."
+        except Exception as e:
+            logger.warning("Memory search failed: %s", e)
+
         messages = [
             {
                 "role": "user",
@@ -62,6 +78,7 @@ Rules:
 **Title:** {title}
 
 **Description:** {description}
+{memory_context}
 
 Generate a detailed execution plan as JSON.""",
             }
@@ -87,6 +104,8 @@ Generate a detailed execution plan as JSON.""",
             "steps": steps,
             "confidence": plan.get("confidence", 0.8),
             "rationale": plan.get("rationale", ""),
+            "memory_context_used": bool(memory_context),
             "tokens": result["tokens"],
             "cost_usd": result["cost_usd"],
         }
+
