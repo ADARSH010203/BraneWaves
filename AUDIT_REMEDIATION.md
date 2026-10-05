@@ -42,19 +42,28 @@ This document records the full repository audit and the remediation applied on
 | Medium | Auth session TTL was hard-coded to seven days | Session persistence now follows `JWT_REFRESH_TOKEN_EXPIRE_DAYS`. |
 | Medium | Deactivated users could continue refreshing existing sessions | Refresh now checks that the user is active. |
 
-## Intentionally not performed automatically
+## Git history purge status
 
-### Git history purge for previously committed uploads
+The repository's reachable Git history has been rewritten to remove the tracked
+PDF/DOCX upload artifacts:
 
-Deleting the files in a normal commit removes them from the current tree but does
-**not** erase bytes from old public commits. A complete purge requires rewriting
-Git history and force-updating shared refs (for example with `git filter-repo`).
-That operation invalidates old commit SHAs and disrupts existing clones, so it
-must be treated as a separate destructive maintenance operation.
+- `main` was force-updated from the tainted history to clean replacement commits.
+- `fix/full-audit-remediation` was re-anchored as a clean commit on top of the
+  rewritten `main`.
+- The open pull request head and merge refs now point to clean commits.
+- The repository has no forks and no tag refs were present during the rewrite.
+- `.gitignore` continues to prevent future tracked uploads under
+  `backend/uploads/`.
 
-Before a history rewrite, inspect the removed documents and assume any sensitive
-content they contained may already have been exposed. Rotate/revoke any secrets
-found inside them.
+GitHub still retains the old unreachable commit/tree objects by SHA immediately
+after the rewrite. GitHub's documented sensitive-data removal process requires
+GitHub Support to dereference cached pull-request views and run server-side
+garbage collection for complete expungement. The first tainted commit identified
+during this cleanup was:
+
+`d53bcead20bcd6ed363c887dd423b8075dda1080`
+
+Affected pull requests: **1**.
 
 ## Verification
 
