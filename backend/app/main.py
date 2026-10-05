@@ -32,11 +32,18 @@ async def lifespan(app: FastAPI):
 
     # ── GROQ_API_KEY guard (only LLM provider) ────────────────────────
     if not settings.GROQ_API_KEY:
-        logger.fatal(
-            "🚨 GROQ_API_KEY is missing or empty! "
-            "Both primary and fallback LLM calls require a valid Groq key. "
-            "Set GROQ_API_KEY in your .env file."
+        message = (
+            "GROQ_API_KEY is missing or empty. "
+            "Set GROQ_API_KEY before running agent tasks."
         )
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(message)
+        logger.warning(message)
+
+    if len(settings.JWT_SECRET_KEY) < 32:
+        raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters.")
+    if settings.JWT_SECRET_KEY.startswith("CHANGE-ME"):
+        raise RuntimeError("Refusing to start with the example JWT secret.")
 
     await connect_db()
     await connect_redis()

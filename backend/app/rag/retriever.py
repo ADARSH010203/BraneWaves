@@ -52,12 +52,14 @@ async def retrieve_chunks(
     if file_ids:
         filter_query["file_id"] = {"$in": file_ids}
 
-    # Fetch candidate chunks
+    # Fetch all candidates for correctness. For large deployments, replace this
+    # in-memory index with a persistent vector service rather than silently
+    # truncating the user's knowledge base.
     cursor = db.chunks.find(
         filter_query,
         {"_id": 1, "text": 1, "file_id": 1, "embedding": 1, "metadata": 1, "index": 1},
-    ).limit(3000)
-    candidates = await cursor.to_list(length=3000)
+    )
+    candidates = await cursor.to_list(length=None)
 
     if not candidates:
         return []

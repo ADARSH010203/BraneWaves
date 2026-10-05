@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 from typing import Any
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 
@@ -72,9 +73,23 @@ async def delete_document(doc_id: str, current_user: dict = Depends(get_current_
     """Deletes a document from the knowledge base and its chunks."""
     db = get_db()
     user_id = current_user["_id"]
-    result = await db.files.delete_one({"_id": doc_id, "user_id": user_id, "task_id": "KNOWLEDGE_BASE"})
-    if result.deleted_count == 0:
+    doc = await db.files.find_one(
+        {"_id": doc_id, "user_id": user_id, "task_id": "KNOWLEDGE_BASE"}
+    )
+    if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
+    await db.files.delete_one({"_id": doc_id, "user_id": user_id})
     await db.chunks.delete_many({"file_id": doc_id, "user_id": user_id})
+
+    storage_path = doc.get("storage_path")
+    if storage_path:
+        try:
+            path = Path(storage_path)
+            if path.exists() and path.is_file():
+                path.unlink()
+        except OSError:
+            # Metadata deletion must still succeed; orphan cleanup can retry later.
+            pass
+
     return {"success": True, "message": "Document deleted"}

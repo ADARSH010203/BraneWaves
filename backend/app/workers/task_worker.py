@@ -45,19 +45,28 @@ async def worker_loop() -> None:
 
     redis = get_redis()
 
+    # Recover jobs left in the processing list by a previously crashed worker.
+    while True:
+        stale = await redis.rpoplpush("task_processing", "task_queue")
+        if stale is None:
+            break
+
     while not _shutdown:
         try:
-            # BLPOP with 5-second timeout (returns None if no message)
-            result = await redis.blpop("task_queue", timeout=5)
-            if result is None:
+            # Atomically move the job into a processing list. A crash leaves the
+            # payload recoverable instead of losing it after BLPOP.
+            raw = await redis.brpoplpush("task_queue", "task_processing", timeout=5)
+            if raw is None:
                 continue
 
-            _, raw = result
             task_data = json.loads(raw)
             await process_task(task_data)
+            await redis.lrem("task_processing", 1, raw)
 
         except json.JSONDecodeError as e:
             logger.error("Invalid task data: %s", e)
+            if "raw" in locals() and raw:
+                await redis.lrem("task_processing", 1, raw)
         except Exception as e:
             logger.exception("Worker error: %s", e)
             await asyncio.sleep(1)

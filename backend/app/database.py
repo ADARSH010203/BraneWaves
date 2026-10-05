@@ -93,8 +93,15 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.users.create_index("created_at")
 
     # Sessions
+    # Invalidate legacy plaintext refresh-token sessions and remove the old
+    # unique index before switching to one-way token hashes.
+    session_indexes = await db.sessions.index_information()
+    if "refresh_token_1" in session_indexes:
+        await db.sessions.drop_index("refresh_token_1")
+    await db.sessions.delete_many({"refresh_token": {"$exists": True}})
+
     await db.sessions.create_index("user_id")
-    await db.sessions.create_index("refresh_token", unique=True)
+    await db.sessions.create_index("refresh_token_hash", unique=True)
     await db.sessions.create_index("expires_at", expireAfterSeconds=0)
 
     # Tasks

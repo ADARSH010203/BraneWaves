@@ -84,7 +84,7 @@ class SessionDoc(BaseModel):
     """MongoDB session document for refresh tokens."""
     id: str = Field(alias="_id")
     user_id: str
-    refresh_token: str
+    refresh_token_hash: str
     user_agent: Optional[str] = None
     ip_address: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

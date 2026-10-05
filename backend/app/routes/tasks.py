@@ -10,6 +10,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel as PydanticBaseModel, Field
 
 from app.deps import DbDep, UserDep
 from app.models.task import TaskCreate, TaskListResponse, TaskResponse
@@ -37,12 +38,14 @@ async def create_new_task(data: TaskCreate, db: DbDep, user: UserDep):
 
     is_safe, reason = check_prompt_injection(data.description)
     if not is_safe:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Input rejected: {reason}",
-        )
+        # Heuristic detection is telemetry, not a security boundary. Real
+        # protection is enforced by tool permissions and isolated execution.
+        logger.warning("Potential prompt injection in task request: %s", reason)
 
-    return await create_task(db, user["_id"], data)
+    try:
+        return await create_task(db, user["_id"], data)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 @router.get("", response_model=TaskListResponse)
@@ -167,11 +170,8 @@ async def cancel_task_endpoint(task_id: str, db: DbDep, user: UserDep):
 
 
 # ── FEAT-07: Report Follow-up Chat ───────────────────────────────────────────
-from pydantic import BaseModel as PydanticBaseModel
-
-
 class ChatRequest(PydanticBaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=4000)
 
 
 @router.post("/{task_id}/chat")
@@ -254,6 +254,10 @@ Instructions:
                 "model_used": used_model,
                 "created_at": datetime.now(timezone.utc),
             })
+            await db.tasks.update_one(
+                {"_id": task_id, "user_id": user["_id"]},
+                {"$inc": {"budget.spent_usd": cost_usd}},
+            )
 
         return {"reply": reply}
 

@@ -197,10 +197,23 @@ class BaseAgent(ABC):
             yield chunk
 
     # ── Tool Execution ───────────────────────────────────────────────────
-    async def execute_tool(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        """Execute a tool from the registry."""
+    async def execute_tool(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        allowed_tools: set[str] | None = None,
+        granted_scopes: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Execute a tool with explicit per-agent authorization."""
         from app.tools.registry import tool_registry
-        result = await tool_registry.execute(tool_name, tool_input, self.user_id)
+        result = await tool_registry.execute(
+            tool_name,
+            tool_input,
+            self.user_id,
+            allowed_tools=allowed_tools,
+            granted_scopes=granted_scopes,
+        )
 
         await self._log(
             event="tool_call",
@@ -266,19 +279,16 @@ class BaseAgent(ABC):
     @staticmethod
     def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Estimate USD cost based on Groq model pricing."""
-        # Groq pricing per 1M tokens (as of 2024)
+        # Groq pricing per 1M tokens, verified against Groq model docs (Oct 2026).
         pricing = {
-            "openai/gpt-oss-120b": {"prompt": 0.59, "completion": 0.79},
-            "groq/openai/gpt-oss-120b": {"prompt": 0.59, "completion": 0.79},
-            "openai/gpt-oss-20b": {"prompt": 0.08, "completion": 0.12},
-            "groq/openai/gpt-oss-20b": {"prompt": 0.08, "completion": 0.12},
-            "groq/compound": {"prompt": 0.59, "completion": 0.79},
-            "qwen/qwen3.6-27b": {"prompt": 0.20, "completion": 0.20},
-            "groq/qwen/qwen3.6-27b": {"prompt": 0.20, "completion": 0.20},
-            "llama-3.3-70b-versatile": {"prompt": 0.59, "completion": 0.79},
-            "llama-3.1-8b-instant": {"prompt": 0.05, "completion": 0.08},
+            "openai/gpt-oss-120b": {"prompt": 0.15, "completion": 0.60},
+            "groq/openai/gpt-oss-120b": {"prompt": 0.15, "completion": 0.60},
+            "openai/gpt-oss-20b": {"prompt": 0.075, "completion": 0.30},
+            "groq/openai/gpt-oss-20b": {"prompt": 0.075, "completion": 0.30},
+            "qwen/qwen3.8-27b": {"prompt": 0.80, "completion": 4.00},
+            "groq/qwen/qwen3.8-27b": {"prompt": 0.80, "completion": 4.00},
         }
-        default_rate = {"prompt": 0.59, "completion": 0.79}
+        default_rate = pricing["openai/gpt-oss-120b"]
         rates = pricing.get(model, default_rate)
         cost = (prompt_tokens * rates["prompt"] + completion_tokens * rates["completion"]) / 1_000_000
         return round(cost, 6)
@@ -327,6 +337,11 @@ class BaseAgent(ABC):
             "created_at": datetime.now(timezone.utc),
         }
         await db.usage_cost.insert_one(doc)
+        # Keep the embedded task budget in sync with the authoritative usage log.
+        await db.tasks.update_one(
+            {"_id": self.task_id, "user_id": self.user_id},
+            {"$inc": {"budget.spent_usd": cost_usd}},
+        )
 
     # ── Helpers ──────────────────────────────────────────────────────────
     async def parse_json_response(self, content: str) -> dict[str, Any]:
@@ -477,7 +492,15 @@ class BaseAgent(ABC):
                         t_args = {}
                     
                     try:
-                        t_result = await self.execute_tool(t_name, t_args)
+                        scopes = {"basic"}
+                        if "python_sandbox" in available_tools:
+                            scopes.add("elevated")
+                        t_result = await self.execute_tool(
+                            t_name,
+                            t_args,
+                            allowed_tools=set(available_tools),
+                            granted_scopes=scopes,
+                        )
                         result_str = json.dumps(t_result)
                     except Exception as e:
                         result_str = json.dumps({"error": str(e)})

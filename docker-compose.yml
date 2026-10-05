@@ -3,8 +3,6 @@ services:
   mongo:
     image: mongo:6.0
     container_name: brainweave-mongo
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
     restart: unless-stopped
@@ -13,8 +11,6 @@ services:
   redis:
     image: redis:7.0-alpine
     container_name: brainweave-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -34,13 +30,31 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=development
     env_file:
-      - ./backend/.env
+      - ./.env
     depends_on:
       - mongo
       - redis
     restart: unless-stopped
 
   # ── Next.js Frontend ───────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: brainweave-worker
+    volumes:
+      - ./backend:/app
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+    env_file:
+      - ./.env
+    depends_on:
+      - mongo
+      - redis
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

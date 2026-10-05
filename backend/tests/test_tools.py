@@ -35,6 +35,33 @@ class TestToolRegistry:
         assert reg.is_allowed("web_search") is False
 
 
+    @pytest.mark.asyncio
+    async def test_elevated_tool_requires_scope(self):
+        reg = ToolRegistry()
+        reg.register(PythonSandboxTool())
+        with pytest.raises(PermissionError):
+            await reg.execute(
+                "python_sandbox",
+                {"code": "print(1)", "timeout": 1},
+                "u1",
+                allowed_tools={"python_sandbox"},
+                granted_scopes={"basic"},
+            )
+
+    @pytest.mark.asyncio
+    async def test_agent_tool_allowlist_is_enforced(self):
+        reg = ToolRegistry()
+        reg.register(WebSearchTool())
+        with pytest.raises(PermissionError):
+            await reg.execute(
+                "web_search",
+                {"query": "test"},
+                "u1",
+                allowed_tools={"paper_search"},
+                granted_scopes={"basic"},
+            )
+
+
 class TestToolInputValidation:
     def test_web_search_input(self):
         inp = WebSearchInput(query="test")
@@ -68,6 +95,16 @@ class TestPythonSandbox:
         )
         assert result["success"] is False
         assert "Forbidden attribute access" in result.get("error", "")
+
+
+    @pytest.mark.asyncio
+    async def test_safe_code_fails_closed_without_isolated_service(self, monkeypatch):
+        from app.tools import python_sandbox as sandbox_module
+        monkeypatch.setattr(sandbox_module.settings, "PYTHON_SANDBOX_URL", None)
+        tool = PythonSandboxTool()
+        result = await tool.execute({"code": "print(1)", "timeout": 1}, "u1")
+        assert result["success"] is False
+        assert "disabled" in result["error"].lower()
 
 
 class TestCitationVerifySSRF:

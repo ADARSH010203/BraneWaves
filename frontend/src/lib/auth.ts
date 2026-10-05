@@ -1,19 +1,16 @@
 /* ─── ARC Platform — Auth Utilities ───────────────────────────────── */
 import type { User } from "@/types";
 
-export function setTokens(access: string, refresh: string): void {
+export function setTokens(access: string): void {
     localStorage.setItem("arc_access_token", access);
-    localStorage.setItem("arc_refresh_token", refresh);
+    // Clean up refresh tokens stored by older builds. Refresh credentials now live
+    // only in an HttpOnly cookie issued by the backend.
+    localStorage.removeItem("arc_refresh_token");
 }
 
 export function getAccessToken(): string | null {
     if (typeof window === "undefined") return null;
     return localStorage.getItem("arc_access_token");
-}
-
-export function getRefreshToken(): string | null {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("arc_refresh_token");
 }
 
 export function clearTokens(): void {

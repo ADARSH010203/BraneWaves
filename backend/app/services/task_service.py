@@ -27,9 +27,26 @@ async def create_task(db: AsyncIOMotorDatabase, user_id: str, data: TaskCreate) 
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
+    user = await db.users.find_one({"_id": user_id}, {"usage_quota_usd": 1})
+    if not user:
+        raise ValueError("User not found")
+
+    usage_rows = await db.usage_cost.aggregate([
+        {"$match": {"user_id": user_id}},
+        {"$group": {"_id": None, "spent": {"$sum": "$cost_usd"}}},
+    ]).to_list(length=1)
+    lifetime_spent = float(usage_rows[0]["spent"]) if usage_rows else 0.0
+    remaining_quota = max(0.0, float(user.get("usage_quota_usd", 10.0)) - lifetime_spent)
+    if remaining_quota < 0.01:
+        raise ValueError("Account usage quota exhausted")
+
+    requested_budget = data.budget_usd if data.budget_usd is not None else settings.MAX_TASK_BUDGET_USD
+    effective_budget = min(requested_budget, settings.MAX_TASK_BUDGET_USD, remaining_quota)
+    effective_steps = min(data.max_steps or settings.MAX_STEPS_PER_TASK, settings.MAX_STEPS_PER_TASK)
+
     budget = TaskBudget(
-        max_usd=data.budget_usd or settings.MAX_TASK_BUDGET_USD,
-        max_steps=data.max_steps or settings.MAX_STEPS_PER_TASK,
+        max_usd=effective_budget,
+        max_steps=effective_steps,
     )
 
     task_doc = {
