@@ -4,6 +4,7 @@ Pydantic-settings based config with env var support.
 """
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -42,10 +43,26 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # ── Groq / LLM ──────────────────────────────────────────────────────
+    # ── Groq / LLM (Groq-only — no other provider keys needed) ─────────
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    LLM_FALLBACK_ROUTING: list[str] = Field(
+        default=[
+            "groq/openai/gpt-oss-20b",
+            "groq/qwen/qwen3.6-27b",
+            "groq/qwen/qwen3.8-27b",
+            "groq/openai/gpt-oss-120b",
+        ]
+    )
+    FALLBACK_LLM_PROVIDER: str = "groq"
+    FALLBACK_LLM_MODEL: str = "qwen/qwen3.6-27b"
+    EVAL_LLM_PROVIDER: str = "groq"
+    EVAL_LLM_MODEL: str = "openai/gpt-oss-20b"
+
+    # ── Critic Settings ────────────────────────────────────────────────────────
+    CRITIC_CONFIDENCE_THRESHOLD: float = 0.45
+
 
     # ── Embeddings (local sentence-transformers, Groq has no embedding API)
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
@@ -86,4 +103,9 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Cached settings singleton."""
-    return Settings()
+    s = Settings()
+    if s.GROQ_API_KEY:
+        os.environ["GROQ_API_KEY"] = s.GROQ_API_KEY
+    if s.GROQ_BASE_URL:
+        os.environ["GROQ_BASE_URL"] = s.GROQ_BASE_URL
+    return s

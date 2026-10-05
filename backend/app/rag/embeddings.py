@@ -5,6 +5,11 @@ Groq does not provide an embedding API, so we use local models.
 """
 from __future__ import annotations
 
+import os
+os.environ["USE_TF"] = "0"
+os.environ["TRANSFORMERS_NO_TF"] = "1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
 import asyncio
 import logging
 from typing import Any

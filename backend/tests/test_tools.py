@@ -5,7 +5,7 @@ from app.tools.registry import ToolRegistry
 from app.tools.web_search import WebSearchTool, WebSearchInput
 from app.tools.paper_search import PaperSearchTool
 from app.tools.dataset_search import DatasetSearchTool
-from app.tools.python_sandbox import PythonSandboxTool, FORBIDDEN_PATTERNS
+from app.tools.python_sandbox import PythonSandboxTool, FORBIDDEN_MODULES, FORBIDDEN_BUILTINS
 from app.tools.citation_verify import CitationVerifyTool
 
 
@@ -48,8 +48,8 @@ class TestToolInputValidation:
 
 class TestPythonSandbox:
     def test_forbidden_patterns(self):
-        assert "import os" in FORBIDDEN_PATTERNS
-        assert "eval(" in FORBIDDEN_PATTERNS
+        assert "os" in FORBIDDEN_MODULES
+        assert "eval" in FORBIDDEN_BUILTINS
 
     @pytest.mark.asyncio
     async def test_safe_code_detection(self):
@@ -59,3 +59,27 @@ class TestPythonSandbox:
         )
         assert result["success"] is False
         assert "Forbidden" in result.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_forbidden_attribute_detection(self):
+        tool = PythonSandboxTool()
+        result = await tool.execute(
+            {"code": "x = ().__class__.__bases__[0].__subclasses__()", "timeout": 5}, "u1"
+        )
+        assert result["success"] is False
+        assert "Forbidden attribute access" in result.get("error", "")
+
+
+class TestCitationVerifySSRF:
+    @pytest.mark.asyncio
+    async def test_blocks_private_and_metadata_ips(self):
+        tool = CitationVerifyTool()
+        # Test AWS/GCP metadata IP
+        res1 = await tool.execute({"url": "http://169.254.169.254/latest/meta-data/"}, "u1")
+        assert res1["success"] is False
+        assert "blocked" in res1["error"].lower()
+
+        # Test localhost
+        res2 = await tool.execute({"url": "http://127.0.0.1:8000/api/secret"}, "u1")
+        assert res2["success"] is False
+        assert "blocked" in res2["error"].lower()

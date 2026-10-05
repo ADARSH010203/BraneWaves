@@ -90,6 +90,8 @@ export interface Report {
     summary?: string;
     citation_ids: string[];
     confidence: number;
+    verified_citation_count?: number;
+    total_citation_count?: number;
     word_count: number;
     created_at: string;
 }

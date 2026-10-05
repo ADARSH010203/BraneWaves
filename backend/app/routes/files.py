@@ -31,9 +31,10 @@ async def upload(
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filename required")
 
-    file_bytes = await file.read()
-
     try:
+        from app.services.file_service import read_upload_file_capped
+        file_bytes = await read_upload_file_capped(file)
+
         return await upload_file(
             db=db,
             user_id=user["_id"],

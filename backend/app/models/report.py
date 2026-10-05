@@ -29,6 +29,8 @@ class ReportDoc(BaseModel):
     sections: list[dict[str, Any]] = Field(default_factory=list)
     citation_ids: list[str] = Field(default_factory=list)
     confidence: float = 0.0
+    verified_citation_count: int = 0
+    total_citation_count: int = 0
     word_count: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -46,6 +48,8 @@ class ReportResponse(BaseModel):
     summary: Optional[str] = None
     citation_ids: list[str]
     confidence: float
+    verified_citation_count: int = 0
+    total_citation_count: int = 0
     word_count: int
     created_at: datetime
 

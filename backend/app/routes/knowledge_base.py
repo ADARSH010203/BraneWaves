@@ -20,13 +20,17 @@ async def upload_document(
         
     db = get_db()
     user_id = current_user["_id"]
+
+    from app.security.rate_limiter import rate_limit_by_user
+    from app.services.file_service import read_upload_file_capped
+    await rate_limit_by_user(user_id)
     
     count = await db.files.count_documents({"user_id": user_id, "task_id": "KNOWLEDGE_BASE"})
     if count >= 20:
         raise HTTPException(status_code=400, detail="Knowledge base limit reached (20 docs). Delete some to upload more.")
 
-    file_bytes = await file.read()
     try:
+        file_bytes = await read_upload_file_capped(file)
         res = await upload_file(
             db=db,
             user_id=user_id,

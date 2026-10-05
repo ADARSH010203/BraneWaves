@@ -22,13 +22,14 @@ async def check_rate_limit(key: str, max_requests: int | None = None, window_sec
     """
     settings = get_settings()
     limit = max_requests or settings.RATE_LIMIT_PER_MINUTE
-    redis = get_redis()
-
     now = time.time()
     window_start = now - window_seconds
     rkey = f"rate:{key}"
 
     try:
+        redis = get_redis()
+        if redis is None:
+            return
         pipe = redis.pipeline()
         pipe.zremrangebyscore(rkey, 0, window_start)
         pipe.zadd(rkey, {str(now): now})
@@ -46,8 +47,8 @@ async def check_rate_limit(key: str, max_requests: int | None = None, window_sec
     except HTTPException:
         raise
     except Exception as e:
-        # Fallback gracefully if Redis is down
-        logger.error("Rate limiter Redis error: %s", e)
+        # Fallback gracefully if Redis is down or not initialised
+        logger.warning("Rate limiter Redis unavailable (degraded mode): %s", e)
 
 
 async def rate_limit_by_ip(request: Request) -> None:

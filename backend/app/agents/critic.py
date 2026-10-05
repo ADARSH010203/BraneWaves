@@ -8,6 +8,8 @@ from typing import Any
 
 from app.agents.base import BaseAgent
 from app.models.agent import AgentType
+from app.models.agent_outputs import CriticOutput
+from app.agents.context_utils import compress_dependency_output, truncate_to_tokens
 
 
 class CriticAgent(BaseAgent):
@@ -21,15 +23,7 @@ class CriticAgent(BaseAgent):
 4. Assign a confidence score
 5. List specific issues that need fixing
 
-Output a JSON object:
-{
-  "confidence": 0.0-1.0,
-  "quality_score": 0.0-1.0,
-  "issues": ["issue 1", "issue 2"],
-  "suggestions": ["suggestion 1", "suggestion 2"],
-  "verdict": "pass|needs_revision|fail",
-  "feedback": "Detailed review feedback"
-}
+Output valid JSON matching the exact required schema.
 
 Be strict but fair. Focus on:
 - Factual accuracy
@@ -42,28 +36,39 @@ Be strict but fair. Focus on:
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         output_to_review = input_data.get("output_to_review", {})
 
+        compressed_output = ""
+        if isinstance(output_to_review, dict):
+            compressed_output = await compress_dependency_output(output_to_review, max_tokens=3000)
+        else:
+            compressed_output = truncate_to_tokens(str(output_to_review), max_tokens=1500)
+
         messages = [
             {
                 "role": "user",
                 "content": f"""Review and critique the following research output:
 
 ```json
-{str(output_to_review)[:6000]}
+{compressed_output}
 ```
 
-Provide a thorough quality assessment as JSON.""",
+Provide a thorough quality assessment as JSON matching the CriticOutput schema.""",
             }
         ]
 
+        from app.config import get_settings
+        settings = get_settings()
+
         result = await self.call_llm(
             messages,
-            model="llama-3.1-8b-instant",
+            model=settings.FALLBACK_LLM_MODEL,
             temperature=0.2,
             max_tokens=1024,
             response_format={"type": "json_object"},
         )
 
-        output = await self.parse_json_response(result["content"])
+        parsed_output = await self.parse_and_validate(result["content"], CriticOutput)
+        output = parsed_output.model_dump()
+
         output["tokens"] = result["tokens"]
         output["cost_usd"] = result["cost_usd"]
         return output

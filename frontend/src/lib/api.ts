@@ -52,8 +52,27 @@ class ApiClient {
         
 
         if (!res.ok) {
-            const body = await res.text();
-            throw new ApiError(res.status, body);
+            let errorMsg = `Request failed with status ${res.status}`;
+            try {
+                const bodyText = await res.text();
+                try {
+                    const json = JSON.parse(bodyText);
+                    if (typeof json.detail === "string") {
+                        errorMsg = json.detail;
+                    } else if (Array.isArray(json.detail)) {
+                        errorMsg = json.detail.map((e: any) => e.msg || JSON.stringify(e)).join(", ");
+                    } else if (json.message) {
+                        errorMsg = json.message;
+                    } else {
+                        errorMsg = bodyText;
+                    }
+                } catch {
+                    if (bodyText) errorMsg = bodyText;
+                }
+            } catch {
+                // Ignore
+            }
+            throw new ApiError(res.status, errorMsg);
         }
 
         return res.json();
@@ -92,6 +111,27 @@ class ApiClient {
             method: "POST",
             body: JSON.stringify({ email, password }),
         });
+    }
+
+    async logout() {
+        const refreshToken = typeof window !== "undefined" ? localStorage.getItem("arc_refresh_token") : null;
+        try {
+            if (refreshToken) {
+                await fetch(`${this.baseUrl}/auth/logout`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ refresh_token: refreshToken }),
+                });
+            }
+        } catch {
+            // Ignore network errors on logout
+        } finally {
+            if (typeof window !== "undefined") {
+                localStorage.removeItem("arc_access_token");
+                localStorage.removeItem("arc_refresh_token");
+                localStorage.removeItem("arc_user");
+            }
+        }
     }
 
     // ── Tasks ─────────────────────────────────────────────────────────

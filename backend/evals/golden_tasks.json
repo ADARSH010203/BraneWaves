@@ -1,0 +1,53 @@
+[
+  {
+    "task_type": "research",
+    "title": "Recent advancements in solid-state batteries",
+    "description": "Search for and summarize the most significant breakthroughs in solid-state battery technology from the last 2 years.",
+    "rubric": [
+      "Must correctly call the web_search or paper_search tool.",
+      "Must cite at least 2 distinct sources.",
+      "Confidence field must be >= 0.6.",
+      "Output summary must mention solid-state technology specifically."
+    ]
+  },
+  {
+    "task_type": "research",
+    "title": "Compare Rust and Go for web backends",
+    "description": "Analyze the tradeoffs between Rust and Go for building high-concurrency web APIs.",
+    "rubric": [
+      "Must mention memory safety (Rust) and garbage collection (Go).",
+      "Must correctly call a search tool.",
+      "Must return a structured comparison in the summary."
+    ]
+  },
+  {
+    "task_type": "data",
+    "title": "Analyze TSLA stock trends",
+    "description": "Find recent TSLA stock prices and analyze the trend over the last month.",
+    "rubric": [
+      "Must call a web search or dataset search tool for TSLA data.",
+      "Must extract specific numeric prices or percentages.",
+      "Must provide a clear trend conclusion (up, down, or flat)."
+    ]
+  },
+  {
+    "task_type": "code",
+    "title": "Write a python script to parse CSV",
+    "description": "Write a Python function that takes a CSV string, parses it, and returns a list of dictionaries. Handle missing values by setting them to None.",
+    "rubric": [
+      "Must include a working Python function.",
+      "The function must handle missing values as requested.",
+      "Must include code block formatting."
+    ]
+  },
+  {
+    "task_type": "code",
+    "title": "Create a React hook for debouncing",
+    "description": "Write a custom React hook called useDebounce that takes a value and a delay.",
+    "rubric": [
+      "Must include valid TypeScript/JavaScript code for a React hook.",
+      "Must use useEffect and setTimeout.",
+      "Must properly clear the timeout on unmount or value change."
+    ]
+  }
+]

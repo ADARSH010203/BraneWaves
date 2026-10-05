@@ -9,6 +9,7 @@ from typing import Any
 
 from app.agents.base import BaseAgent
 from app.models.agent import AgentType
+from app.models.agent_outputs import PlannerOutput
 
 logger = logging.getLogger("arc.agents.planner")
 
@@ -23,26 +24,14 @@ class PlannerAgent(BaseAgent):
     system_prompt = """You are an expert research planning agent. Your job is to decompose a complex research task into a set of concrete, executable steps.
 
 For each step, specify:
+- id: A short unique identifier for this step (e.g., 'research_1', 'data_1')
 - title: A short descriptive title
 - type: One of "research", "data", "code", "critique", "report"
 - description: What should be done in this step
-- depends_on: A list of step indices (0-indexed) that must complete before this step
+- depends_on: A list of step IDs that must complete before this step
 - input_data: Any specific parameters or queries for this step
 
-Output a valid JSON object with the following structure:
-{
-  "steps": [
-    {
-      "title": "...",
-      "type": "research|data|code|critique|report",
-      "description": "...",
-      "depends_on": [],
-      "input_data": {}
-    }
-  ],
-  "confidence": 0.0-1.0,
-  "rationale": "Brief explanation of the plan"
-}
+Output valid JSON matching the exact required schema.
 
 Rules:
 - Keep steps focused and atomic
@@ -80,7 +69,7 @@ Rules:
 **Description:** {description}
 {memory_context}
 
-Generate a detailed execution plan as JSON.""",
+Generate a detailed execution plan as JSON matching the PlannerOutput schema.""",
             }
         ]
 
@@ -91,15 +80,11 @@ Generate a detailed execution plan as JSON.""",
             response_format={"type": "json_object"},
         )
 
-        plan = await self.parse_json_response(result["content"])
+        parsed_output = await self.parse_and_validate(result["content"], PlannerOutput)
+        plan = parsed_output.model_dump()
 
-        # Convert dependency indices to step IDs (will be assigned later)
         steps = plan.get("steps", [])
-        for i, step in enumerate(steps):
-            deps = step.get("depends_on", [])
-            # Convert integer indices to string indices for now
-            step["depends_on"] = [str(d) for d in deps if isinstance(d, int) and d < i]
-
+        
         return {
             "steps": steps,
             "confidence": plan.get("confidence", 0.8),

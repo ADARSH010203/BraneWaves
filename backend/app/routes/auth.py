@@ -80,6 +80,18 @@ async def refresh(data: RefreshRequest, db: DbDep):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
 
 
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit_by_ip)],
+)
+async def logout(data: RefreshRequest, db: DbDep):
+    """Log out user and invalidate refresh token session."""
+    from app.services.auth_service import logout_user
+    deleted = await logout_user(db, data.refresh_token)
+    return {"success": True, "message": "Logged out successfully" if deleted else "Session was already inactive"}
+
+
 @router.get("/{provider}/login")
 async def provider_login(provider: str, request: Request):
     """Redirects to the specified provider."""

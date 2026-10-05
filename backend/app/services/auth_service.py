@@ -216,3 +216,9 @@ async def refresh_tokens(db: AsyncIOMotorDatabase, refresh_token_str: str) -> To
     await db.sessions.insert_one(session_doc)
 
     return TokenResponse(access_token=new_access, refresh_token=new_refresh)
+
+
+async def logout_user(db: AsyncIOMotorDatabase, refresh_token_str: str) -> bool:
+    """Invalidate session by deleting refresh token from database."""
+    res = await db.sessions.delete_one({"refresh_token": refresh_token_str})
+    return res.deleted_count > 0

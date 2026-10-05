@@ -6,10 +6,31 @@ from __future__ import annotations
 
 from typing import Any
 
+import ipaddress
+import socket
+from urllib.parse import urlparse
 import httpx
 from pydantic import Field
 
 from app.tools.base import BaseTool, ToolInput
+
+
+def is_safe_url(url: str) -> bool:
+    """Validate that URL does not point to internal/private networks or cloud metadata."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        # Block cloud metadata hosts explicitly
+        if hostname in ("169.254.169.254", "metadata.google.internal", "localhost", "127.0.0.1"):
+            return False
+        ip = ipaddress.ip_address(socket.gethostbyname(hostname))
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast)
+    except Exception:
+        return False
 
 
 class CitationVerifyInput(ToolInput):
@@ -34,10 +55,20 @@ class CitationVerifyTool(BaseTool):
         expected_title = params.get("expected_title", "")
         expected_content = params.get("expected_content", "")
 
+        if not is_safe_url(url):
+            return {
+                "success": False,
+                "url": url,
+                "accessible": False,
+                "error": "URL blocked: internal, private, or invalid host destination.",
+                "verification_score": 0.0,
+                "verified": False,
+            }
+
         try:
             async with httpx.AsyncClient(
                 timeout=15,
-                follow_redirects=True,
+                follow_redirects=False,
                 headers={"User-Agent": "ARC-CitationBot/1.0"},
             ) as client:
                 resp = await client.get(url)

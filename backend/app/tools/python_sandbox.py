@@ -18,14 +18,24 @@ from app.tools.base import BaseTool, ToolInput
 logger = logging.getLogger("arc.tools.sandbox")
 settings = get_settings()
 
-# ── Forbidden modules for AST-based checking ────────────────────────────────
+# ── Forbidden modules & identifiers for AST checking ───────────────────────
 FORBIDDEN_MODULES = {
     "os", "sys", "subprocess", "shutil", "socket", "http", "urllib",
     "requests", "signal", "ctypes", "multiprocessing", "pathlib",
-    "importlib", "builtins", "code", "codeop", "compileall",
+    "importlib", "builtins", "code", "codeop", "compileall", "pty",
+    "posix", "posixpath", "nt", "ntpath", "platform", "resource",
 }
 
-FORBIDDEN_BUILTINS = {"eval", "exec", "compile", "__import__", "open", "breakpoint"}
+FORBIDDEN_BUILTINS = {
+    "eval", "exec", "compile", "__import__", "open", "breakpoint",
+    "getattr", "setattr", "delattr", "vars", "globals", "locals",
+    "input", "memoryview", "exit", "quit"
+}
+
+FORBIDDEN_ATTRIBUTES = {
+    "__subclasses__", "__mro__", "__bases__", "__class__", "__globals__",
+    "__code__", "__builtins__", "__import__", "__loader__", "__spec__",
+}
 
 
 class PythonSandboxInput(ToolInput):
@@ -48,8 +58,7 @@ class PythonSandboxTool(BaseTool):
         code = params["code"]
         timeout = params.get("timeout", 30)
 
-        # BUG-07 FIX: AST-based security check instead of string matching
-        # This prevents bypasses like "im" + "port os"
+        # AST-based security verification
         try:
             tree = ast.parse(code)
         except SyntaxError as e:
@@ -75,7 +84,14 @@ class PythonSandboxTool(BaseTool):
                             "error": f"Forbidden import: {node.module}",
                             "output": "",
                         }
-            # Check dangerous builtins (eval, exec, compile, open, __import__)
+            # Check attribute traversal (__class__, __subclasses__, __globals__, etc.)
+            if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRIBUTES:
+                return {
+                    "success": False,
+                    "error": f"Forbidden attribute access: {node.attr}",
+                    "output": "",
+                }
+            # Check dangerous builtins (eval, exec, compile, open, getattr, globals, etc.)
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_BUILTINS:
                     return {

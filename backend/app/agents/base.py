@@ -11,7 +11,9 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Type, TypeVar
+
+from pydantic import BaseModel, ValidationError
 
 from groq import AsyncGroq
 
@@ -71,7 +73,7 @@ class BaseAgent(ABC):
         self.budget_usd = budget_usd
         self._total_cost = 0.0
         self._total_tokens = 0
-        self._client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+        self._client = None
 
     # ── Abstract ─────────────────────────────────────────────────────────
     @abstractmethod
@@ -87,30 +89,30 @@ class BaseAgent(ABC):
         temperature: Optional[float] = None,
         max_tokens: int = 4096,
         response_format: Optional[dict] = None,
+        tools: Optional[list[dict]] = None,
     ) -> dict[str, Any]:
         """
-        Make an async LLM call with token tracking and cost logging.
+        Make an async LLM call with token tracking and cost logging using litellm.
         Returns dict with 'content', 'tokens', 'cost_usd'.
         """
         self._check_budget()
-        model = model or settings.GROQ_MODEL
         temp = temperature if temperature is not None else self.temperature
 
         # Prepend system prompt if not already present
         if self.system_prompt and (not messages or messages[0].get("role") != "system"):
             messages = [{"role": "system", "content": self.system_prompt}] + messages
 
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temp,
-            "max_tokens": max_tokens,
-        }
-        if response_format:
-            kwargs["response_format"] = response_format
+        from app.agents.llm_client import chat_completion
 
         with Timer(f"llm_call.{self.agent_type.value}"):
-            response = await self._client.chat.completions.create(**kwargs)
+            response = await chat_completion(
+                messages=messages,
+                model=model,
+                temperature=temp,
+                max_tokens=max_tokens,
+                response_format=response_format,
+                tools=tools,
+            )
 
         # Extract usage
         usage = response.usage
@@ -118,8 +120,8 @@ class BaseAgent(ABC):
         completion_tokens = usage.completion_tokens if usage else 0
         total_tokens = prompt_tokens + completion_tokens
 
-        # Estimate cost (GPT-4o pricing as default)
-        cost_usd = self._estimate_cost(model, prompt_tokens, completion_tokens)
+        used_model = response.model or model or settings.GROQ_MODEL
+        cost_usd = self._estimate_cost(used_model, prompt_tokens, completion_tokens)
 
         self._total_cost += cost_usd
         self._total_tokens += total_tokens
@@ -129,13 +131,14 @@ class BaseAgent(ABC):
         inc("cost.total_usd", cost_usd)
 
         content = response.choices[0].message.content or ""
+        tool_calls = response.choices[0].message.tool_calls or []
 
         # Log to MongoDB
         await self._log(
             event="llm_response",
             message=f"LLM call: {total_tokens} tokens, ${cost_usd:.4f}",
             data={
-                "model": model,
+                "model": used_model,
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "cost_usd": cost_usd,
@@ -143,13 +146,55 @@ class BaseAgent(ABC):
         )
 
         # Record cost entry
-        await self._record_cost(model, prompt_tokens, completion_tokens, cost_usd)
+        await self._record_cost(used_model, prompt_tokens, completion_tokens, cost_usd)
 
         return {
             "content": content,
+            "tool_calls": tool_calls,
             "tokens": {"prompt": prompt_tokens, "completion": completion_tokens, "total": total_tokens},
             "cost_usd": cost_usd,
         }
+
+    async def call_llm_streaming(
+        self,
+        messages: list[dict[str, str]],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: int = 4096,
+    ):
+        """
+        Stream LLM output token by token.
+        """
+        self._check_budget()
+        temp = temperature if temperature is not None else self.temperature
+
+        if self.system_prompt and (not messages or messages[0].get("role") != "system"):
+            messages = [{"role": "system", "content": self.system_prompt}] + messages
+
+        from app.agents.llm_client import stream_chat_completion
+        from app.database import get_redis
+        import json
+        
+        redis_client = get_redis()
+
+        async for chunk in stream_chat_completion(
+            messages=messages,
+            model=model,
+            temperature=temp,
+            max_tokens=max_tokens,
+        ):
+            try:
+                payload = json.dumps({
+                    "event": "token_stream",
+                    "task_id": self.task_id,
+                    "step_id": self.step_id if hasattr(self, "step_id") else "report",
+                    "agent_type": self.agent_type.value,
+                    "chunk": chunk
+                })
+                await redis_client.publish(f"task:{self.task_id}", payload)
+            except Exception:
+                pass
+            yield chunk
 
     # ── Tool Execution ───────────────────────────────────────────────────
     async def execute_tool(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -223,13 +268,15 @@ class BaseAgent(ABC):
         """Estimate USD cost based on Groq model pricing."""
         # Groq pricing per 1M tokens (as of 2024)
         pricing = {
+            "openai/gpt-oss-120b": {"prompt": 0.59, "completion": 0.79},
+            "groq/openai/gpt-oss-120b": {"prompt": 0.59, "completion": 0.79},
+            "openai/gpt-oss-20b": {"prompt": 0.08, "completion": 0.12},
+            "groq/openai/gpt-oss-20b": {"prompt": 0.08, "completion": 0.12},
+            "groq/compound": {"prompt": 0.59, "completion": 0.79},
+            "qwen/qwen3.6-27b": {"prompt": 0.20, "completion": 0.20},
+            "groq/qwen/qwen3.6-27b": {"prompt": 0.20, "completion": 0.20},
             "llama-3.3-70b-versatile": {"prompt": 0.59, "completion": 0.79},
-            "llama-3.1-70b-versatile": {"prompt": 0.59, "completion": 0.79},
             "llama-3.1-8b-instant": {"prompt": 0.05, "completion": 0.08},
-            "llama3-70b-8192": {"prompt": 0.59, "completion": 0.79},
-            "llama3-8b-8192": {"prompt": 0.05, "completion": 0.08},
-            "mixtral-8x7b-32768": {"prompt": 0.24, "completion": 0.24},
-            "gemma2-9b-it": {"prompt": 0.20, "completion": 0.20},
         }
         default_rate = {"prompt": 0.59, "completion": 0.79}
         rates = pricing.get(model, default_rate)
@@ -283,18 +330,214 @@ class BaseAgent(ABC):
 
     # ── Helpers ──────────────────────────────────────────────────────────
     async def parse_json_response(self, content: str) -> dict[str, Any]:
-        """Attempt to parse LLM response as JSON, with fallback."""
+        """Attempt to parse LLM response as JSON, with robust fallback for LaTeX math and markdown."""
+        import re
         try:
-            # Try direct parse
-            return json.loads(content)
-        except json.JSONDecodeError:
-            # Try to extract JSON block from markdown
-            if "```json" in content:
-                start = content.index("```json") + 7
-                end = content.index("```", start)
-                return json.loads(content[start:end].strip())
-            elif "```" in content:
-                start = content.index("```") + 3
-                end = content.index("```", start)
-                return json.loads(content[start:end].strip())
-            raise
+            return json.loads(content, strict=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try extracting JSON code block from markdown
+        extracted = content
+        if "```json" in content:
+            start = content.index("```json") + 7
+            end = content.find("```", start)
+            extracted = content[start:end].strip() if end != -1 else content[start:].strip()
+        elif "```" in content:
+            start = content.index("```") + 3
+            end = content.find("```", start)
+            extracted = content[start:end].strip() if end != -1 else content[start:].strip()
+
+        try:
+            return json.loads(extracted, strict=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Clean unescaped backslashes in math/latex (e.g. \psi, \alpha, \frac, \text)
+        cleaned = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', extracted)
+        try:
+            return json.loads(cleaned, strict=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # If enclosed between outer curly braces
+        start = extracted.find("{")
+        end = extracted.rfind("}") + 1
+        if start >= 0 and end > start:
+            sub = extracted[start:end]
+            try:
+                return json.loads(sub, strict=False)
+            except Exception:
+                sub_cleaned = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', sub)
+                return json.loads(sub_cleaned, strict=False)
+
+        raise json.JSONDecodeError("Failed to parse JSON", content, 0)
+
+    T = TypeVar("T", bound=BaseModel)
+
+    async def parse_and_validate(self, content: str, schema: Type[T]) -> T:
+        """Parse LLM JSON response and validate against Pydantic schema, with 1 retry on failure."""
+        try:
+            parsed = await self.parse_json_response(content)
+            return schema.model_validate(parsed)
+        except ValidationError as e:
+            logger.warning("Validation error on LLM output: %s", e)
+            # Retry once with a corrective prompt
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": "Please generate the output."},
+                {"role": "assistant", "content": content},
+                {"role": "user", "content": f"Your JSON did not match the required schema: {e.errors()}. Please resend valid JSON matching the schema precisely."}
+            ]
+            result = await self.call_llm(messages, response_format={"type": "json_object"})
+            parsed_retry = await self.parse_json_response(result["content"])
+            return schema.model_validate(parsed_retry)
+
+    async def run_agentic_loop(self, messages: list[dict[str, str]], available_tools: list[str], max_iterations: int = 6) -> dict[str, Any]:
+        """Run a ReAct loop calling tools until a final answer is returned or max iterations hit."""
+        from app.tools.registry import tool_registry
+        from app.agents.llm_client import extract_failed_generation
+
+        tools_schema = []
+        for t_name in available_tools:
+            schema = tool_registry.build_tool_schema(t_name)
+            if schema:
+                tools_schema.append(schema)
+
+        iterations = 0
+        total_cost = 0.0
+        total_tokens = 0
+        content = ""
+        
+        while iterations < max_iterations:
+            self._check_budget()
+            
+            # Call LLM
+            is_last_iteration = iterations == (max_iterations - 1)
+            current_tools = tools_schema if not is_last_iteration else None
+            
+            try:
+                response = await self.call_llm(
+                    messages,
+                    tools=current_tools,
+                )
+            except Exception as e:
+                # If Groq rejected a nonexistent tool call like 'json', extract from failed_generation
+                extracted_json = extract_failed_generation(e)
+
+                if extracted_json:
+                    return {
+                        "content": extracted_json,
+                        "cost_usd": total_cost,
+                        "tokens": total_tokens
+                    }
+                raise e
+            
+            total_cost += response.get("cost_usd", 0.0)
+            total_tokens += response.get("tokens", {}).get("total", 0)
+            
+            tool_calls = response.get("tool_calls", [])
+            content = response.get("content", "")
+            
+            if content:
+                messages.append({"role": "assistant", "content": content})
+            
+            if tool_calls:
+                # Check if any tool call is 'json' (LLM attempted to return answer as a function call)
+                for tc in tool_calls:
+                    if tc.function.name in ("json", "submit_answer", "final_answer"):
+                        args = tc.function.arguments
+                        return {
+                            "content": args if isinstance(args, str) else json.dumps(args),
+                            "cost_usd": total_cost,
+                            "tokens": total_tokens
+                        }
+
+                tool_calls_dict = []
+                for tc in tool_calls:
+                    tool_calls_dict.append({
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    })
+                
+                if content:
+                    messages[-1]["tool_calls"] = tool_calls_dict
+                else:
+                    messages.append({"role": "assistant", "tool_calls": tool_calls_dict})
+
+                for tc in tool_calls:
+                    t_name = tc.function.name
+                    try:
+                        t_args = json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else (tc.function.arguments or {})
+                    except Exception:
+                        t_args = {}
+                    
+                    try:
+                        t_result = await self.execute_tool(t_name, t_args)
+                        result_str = json.dumps(t_result)
+                    except Exception as e:
+                        result_str = json.dumps({"error": str(e)})
+                        
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": t_name,
+                        "content": result_str
+                    })
+                iterations += 1
+            else:
+                # No tool calls = final answer
+                if content.strip():
+                    return {
+                        "content": content,
+                        "cost_usd": total_cost,
+                        "tokens": total_tokens
+                    }
+                # Empty content with no tool calls — force a synthesis below
+                break
+                
+        # Forced final synthesis: compile user task + tool outputs into a clean prompt
+        tool_findings = []
+        user_prompt = ""
+        for m in messages:
+            if m.get("role") == "user" and not user_prompt:
+                user_prompt = m.get("content", "")
+            elif m.get("role") == "tool":
+                tool_findings.append(f"Tool {m.get('name')}: {m.get('content')}")
+
+        logger.info("Agentic loop finished — synthesising final answer from %d tool results", len(tool_findings))
+        synthesis_messages = [
+            {"role": "system", "content": self.system_prompt},
+            {
+                "role": "user",
+                "content": f"""{user_prompt}
+
+Data and Tool Results Gathered:
+{chr(10).join(tool_findings) if tool_findings else "No external tool data was retrieved."}
+
+Based on all the information and findings above, provide the complete, detailed final answer as valid JSON matching the required schema. Ensure all fields are fully populated with high quality content."""
+            }
+        ]
+        try:
+            synthesis = await self.call_llm(
+                synthesis_messages,
+                tools=None,
+                response_format={"type": "json_object"},
+            )
+            total_cost += synthesis.get("cost_usd", 0.0)
+            total_tokens += synthesis.get("tokens", {}).get("total", 0)
+            content = synthesis.get("content", "")
+        except Exception as e:
+            extracted = extract_failed_generation(e)
+            if extracted:
+                content = extracted
+
+        return {
+            "content": content or "{}",
+            "cost_usd": total_cost,
+            "tokens": total_tokens
+        }

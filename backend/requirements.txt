@@ -25,3 +25,7 @@ itsdangerous==2.1.2
 # Testing
 pytest==8.3.4
 pytest-asyncio==0.24.0
+
+# LLM Fallback & Context
+litellm==1.96.0
+tiktoken==0.12.0

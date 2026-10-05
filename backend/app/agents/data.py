@@ -8,6 +8,8 @@ from typing import Any
 
 from app.agents.base import BaseAgent
 from app.models.agent import AgentType
+from app.models.agent_outputs import DataOutput
+from app.agents.context_utils import compress_dependency_output
 
 
 class DataAgent(BaseAgent):
@@ -20,40 +22,20 @@ class DataAgent(BaseAgent):
 3. Extract statistical insights and patterns
 4. Present findings in a structured format
 
-Output a JSON object:
-{
-  "datasets_found": [
-    {"name": "...", "source": "...", "description": "...", "relevance": 0.0-1.0}
-  ],
-  "analysis": "Summary of data analysis",
-  "statistics": {"key_metric": "value"},
-  "visualizations": ["description of charts/plots generated"],
-  "confidence": 0.0-1.0
-}
-
+Output valid JSON matching the exact required schema.
 Focus on data quality, relevance, and statistical rigour."""
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        description = input_data.get("step_description", input_data.get("description", ""))
+        description = input_data.get("step_description") or input_data.get("description") or input_data.get("task_description") or input_data.get("query") or ""
         dep_outputs = input_data.get("dependency_outputs", {})
-
-        # Search for datasets
-        dataset_results = {}
-        try:
-            dataset_results = await self.execute_tool("dataset_search", {"query": description[:200]})
-        except Exception:
-            pass
 
         # Build context
         context = ""
         if dep_outputs:
             for dep_id, output in dep_outputs.items():
                 if isinstance(output, dict):
-                    context += f"\nPrevious step output: {str(output)[:500]}"
-
-        dataset_context = ""
-        if dataset_results.get("results"):
-            dataset_context = f"\n\nDataset Search Results:\n{dataset_results['results'][:3000]}"
+                    compressed = await compress_dependency_output(output)
+                    context += f"\nPrevious step output: {compressed}"
 
         messages = [
             {
@@ -62,21 +44,22 @@ Focus on data quality, relevance, and statistical rigour."""
 
 **Topic:** {description}
 {context}
-{dataset_context}
 
-If code analysis is needed, describe the analysis approach.
-Provide your findings as JSON.""",
+Use available tools (dataset_search, web_search, python_sandbox) to find real numeric data points, trends, and statistics.
+Provide your complete findings as JSON matching the DataOutput schema.""",
             }
         ]
 
-        result = await self.call_llm(
-            messages,
-            temperature=0.2,
-            max_tokens=4096,
-            response_format={"type": "json_object"},
+        available_tools = ["dataset_search", "web_search", "python_sandbox"]
+        result = await self.run_agentic_loop(
+            messages=messages,
+            available_tools=available_tools,
+            max_iterations=6
         )
 
-        output = await self.parse_json_response(result["content"])
+        parsed_output = await self.parse_and_validate(result["content"], DataOutput)
+        output = parsed_output.model_dump()
+        
         output["tokens"] = result["tokens"]
         output["cost_usd"] = result["cost_usd"]
         return output

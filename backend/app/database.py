@@ -30,9 +30,8 @@ def get_db() -> AsyncIOMotorDatabase:
     return _mongo_db
 
 
-def get_redis() -> "Redis":
-    """Return the Redis client instance."""
-    assert _redis_client is not None, "Redis not initialised — call connect_redis() first"
+def get_redis() -> "Redis | None":
+    """Return the Redis client instance (or None if uninitialised)."""
     return _redis_client
 
 
@@ -61,18 +60,27 @@ async def connect_redis() -> None:
     """Open Redis connection."""
     global _redis_client
     settings = get_settings()
-    _redis_client = aioredis.from_url(
-        str(settings.REDIS_URL),
-        decode_responses=True,
-    )
-    logger.info("Redis connected → %s", settings.REDIS_URL)
+    try:
+        client = aioredis.from_url(
+            str(settings.REDIS_URL),
+            decode_responses=True,
+        )
+        await client.ping()
+        _redis_client = client
+        logger.info("Redis connected → %s", settings.REDIS_URL)
+    except Exception as e:
+        logger.warning("Redis connection failed (%s). Continuing in degraded mode.", e)
+        _redis_client = None
 
 
 async def disconnect_redis() -> None:
     """Close Redis connection."""
     global _redis_client
     if _redis_client:
-        await _redis_client.aclose()
+        try:
+            await _redis_client.aclose()
+        except Exception:
+            pass
         _redis_client = None
         logger.info("Redis disconnected")
 

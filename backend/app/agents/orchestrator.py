@@ -24,6 +24,14 @@ from app.config import get_settings
 from app.database import get_db, get_redis
 from app.models.agent import AgentRunStatus, AgentType
 from app.models.task import StepStatus, StepType, TaskStatus
+from app.models.agent_outputs import (
+    ResearchOutput,
+    DataOutput,
+    CodeOutput,
+    CriticOutput,
+    ReportOutput,
+    PlannerOutput,
+)
 
 logger = logging.getLogger("arc.orchestrator")
 settings = get_settings()
@@ -67,6 +75,12 @@ class TaskOrchestrator:
         self._loop_counter: dict[str, int] = defaultdict(int)
         self._total_cost = 0.0
         self._max_loops = 3
+        try:
+            from app.tools.registry import register_all_tools, tool_registry
+            if not tool_registry._tools:
+                register_all_tools()
+        except Exception:
+            pass
 
     async def execute(self) -> dict[str, Any]:
         """Main entry point: plan → execute → report."""
@@ -118,6 +132,7 @@ class TaskOrchestrator:
             step["_id"] = step_id
             step_docs.append({
                 "_id": step_id,
+                "id": step.get("id", str(i)),
                 "task_id": self.task_id,
                 "order": i,
                 "step_type": step.get("type", StepType.RESEARCH.value),
@@ -133,8 +148,8 @@ class TaskOrchestrator:
                 "created_at": datetime.now(timezone.utc),
             })
 
-        # BUG-01 FIX: Resolve planner's string indices to actual UUIDs
-        idx_to_uuid = {str(i): s["_id"] for i, s in enumerate(step_docs)}
+        # BUG-01 FIX: Resolve planner's string IDs to actual UUIDs
+        idx_to_uuid = {s["id"]: s["_id"] for s in step_docs}
         for s in step_docs:
             s["depends_on"] = [idx_to_uuid[d] for d in s["depends_on"] if d in idx_to_uuid]
 
@@ -180,6 +195,10 @@ class TaskOrchestrator:
         budget = (await db.tasks.find_one({"_id": self.task_id}))["budget"]
         max_usd = budget.get("max_usd", settings.MAX_TASK_BUDGET_USD)
 
+        # Track failed and skipped steps separately from completed
+        failed_step_ids: set[str] = set()
+        skipped_step_ids: set[str] = set()
+
         while len(self._steps_completed) < len(step_docs):
             # Check for cancellation before each batch
             await self._check_cancellation()
@@ -188,20 +207,55 @@ class TaskOrchestrator:
             if self._total_cost >= max_usd:
                 raise BudgetExceededError(f"Task budget exceeded: ${self._total_cost:.4f} >= ${max_usd:.2f}")
 
-            # Find ready steps (all dependencies met)
+            # Find ready steps (all dependencies resolved — completed, failed, or skipped)
+            resolved = self._steps_completed | failed_step_ids | skipped_step_ids
             ready = []
+            newly_skipped = []
             for s in step_docs:
                 sid = s["_id"]
                 if sid in self._steps_completed:
                     continue
                 deps = s.get("depends_on", [])
-                if all(d in self._steps_completed for d in deps):
+                if not all(d in resolved for d in deps):
+                    continue  # Not all deps resolved yet
+
+                # Check if any dependency failed or was skipped — if so, skip this step
+                bad_deps = [d for d in deps if d in failed_step_ids or d in skipped_step_ids]
+                if bad_deps:
+                    newly_skipped.append((s, bad_deps))
+                else:
                     ready.append(s)
 
-            if not ready:
-                # Possible cycle detection
+            # Mark newly-skipped steps (transitive propagation happens next iteration)
+            for s, bad_deps in newly_skipped:
+                sid = s["_id"]
+                dep_names = ", ".join(bad_deps)
+                skip_msg = f"Skipped: dependency step(s) failed or were skipped: {dep_names}"
+                await db.task_steps.update_one(
+                    {"_id": sid},
+                    {"$set": {
+                        "status": StepStatus.SKIPPED.value,
+                        "error": skip_msg,
+                        "completed_at": datetime.now(timezone.utc),
+                    }},
+                )
+                await self._emit_event("step_status", {
+                    "step_id": sid, "status": "skipped", "error": skip_msg,
+                })
+                skipped_step_ids.add(sid)
+                self._steps_completed.add(sid)
+                logger.warning("Step %s skipped: %s", sid, skip_msg)
+
+            if not ready and not newly_skipped:
+                # No progress possible — check if everything is resolved or deadlocked
                 remaining = [s["_id"] for s in step_docs if s["_id"] not in self._steps_completed]
-                raise RuntimeError(f"Dependency deadlock detected. Remaining: {remaining}")
+                if remaining:
+                    raise RuntimeError(f"Dependency deadlock detected. Remaining: {remaining}")
+                break
+
+            if not ready:
+                # Only skips happened this iteration — loop again for transitive propagation
+                continue
 
             # Execute ready steps in parallel
             tasks = [self._execute_single_step(s) for s in ready]
@@ -218,6 +272,7 @@ class TaskOrchestrator:
                             {"_id": sid},
                             {"$set": {"status": StepStatus.FAILED.value, "error": str(result)}},
                         )
+                        failed_step_ids.add(sid)
                 self._steps_completed.add(sid)
 
     async def _execute_single_step(self, step: dict) -> dict[str, Any]:
@@ -281,7 +336,7 @@ class TaskOrchestrator:
 
                 # Trigger repair if critic verdict is bad
                 critic_verdict = critic_result.get("verdict", "pass")
-                if critic_verdict in ("fail", "needs_revision") and confidence < 0.45:
+                if critic_verdict in ("fail", "needs_revision") and confidence < settings.CRITIC_CONFIDENCE_THRESHOLD:
                     logger.warning(
                         "Critic flagged step %s as '%s' (confidence=%.2f). Attempting repair.",
                         sid, critic_verdict, confidence
@@ -377,12 +432,32 @@ class TaskOrchestrator:
             await repair.complete_run(result)
             self._total_cost += repair._total_cost
 
+            # Bug 4: Unwrap corrected_output and validate against the step's expected schema
+            schema_map = {
+                AgentType.RESEARCH.value: ResearchOutput,
+                AgentType.DATA.value: DataOutput,
+                AgentType.CODE.value: CodeOutput,
+                AgentType.CRITIC.value: CriticOutput,
+                AgentType.REPORT.value: ReportOutput,
+                AgentType.PLANNER.value: PlannerOutput,
+            }
+            schema_cls = schema_map.get(step.get("agent_type"))
+            
+            final_output = result.get("corrected_output", result)
+            if schema_cls and "corrected_output" in result:
+                import json
+                try:
+                    parsed = await repair.parse_and_validate(json.dumps(result["corrected_output"]), schema_cls)
+                    final_output = parsed.model_dump()
+                except Exception as e:
+                    logger.warning(f"Failed to parse repaired output with parse_and_validate: {e}, falling back to raw.")
+
             # Update step with repaired output
             await db.task_steps.update_one(
                 {"_id": sid},
                 {"$set": {
                     "status": StepStatus.COMPLETED.value,
-                    "output_data": result,
+                    "output_data": final_output,
                     "completed_at": datetime.now(timezone.utc),
                 }},
             )
@@ -402,15 +477,24 @@ class TaskOrchestrator:
 
         outputs = {s["_id"]: s.get("output_data", {}) for s in steps}
 
+        # Gather failed/skipped steps so the report can note gaps honestly
+        failed_steps = await db.task_steps.find(
+            {"task_id": self.task_id, "status": {"$in": [StepStatus.FAILED.value, StepStatus.SKIPPED.value]}}
+        ).to_list(length=100)
+        failed_info = [
+            {"title": s.get("title", ""), "status": s.get("status", ""), "error": s.get("error", "")}
+            for s in failed_steps
+        ]
+
         report_agent = ReportAgent(
             task_id=self.task_id,
             step_id="report",
             user_id=self.user_id,
             budget_usd=settings.MAX_AGENT_BUDGET_USD,
         )
-        await report_agent.start_run({"step_outputs": outputs})
+        await report_agent.start_run({"step_outputs": outputs, "failed_steps": failed_info})
         try:
-            report = await report_agent.run({"step_outputs": outputs, "task_id": self.task_id})
+            report = await report_agent.run({"step_outputs": outputs, "task_id": self.task_id, "failed_steps": failed_info})
             await report_agent.complete_run(report, confidence=report.get("confidence", 0.7))
             self._total_cost += report_agent._total_cost
 
@@ -428,6 +512,8 @@ class TaskOrchestrator:
                 "sections": report.get("sections", []),
                 "citation_ids": report.get("citation_ids", []),
                 "confidence": report.get("confidence", 0.7),
+                "verified_citation_count": report.get("verified_citation_count", 0),
+                "total_citation_count": report.get("total_citation_count", 0),
                 "word_count": len(report.get("content", "").split()),
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc),
@@ -471,14 +557,19 @@ class TaskOrchestrator:
         """Check Redis for cancellation flag. Raises TaskCancelledException if set."""
         try:
             redis = get_redis()
-            cancel_flag = await redis.get(f"task:{self.task_id}:cancel")
-            if cancel_flag == "1":
-                raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+            if redis is not None:
+                cancel_flag = await redis.get(f"task:{self.task_id}:cancel")
+                if cancel_flag == "1":
+                    raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+            else:
+                db = get_db()
+                task = await db.tasks.find_one({"_id": self.task_id}, {"status": 1})
+                if task and task.get("status") == TaskStatus.CANCELLED.value:
+                    raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
         except TaskCancelledException:
             raise
         except Exception as e:
             # Redis unavailable — also check MongoDB status as fallback
-            logger.warning("Could not check Redis cancel flag: %s", e)
             db = get_db()
             task = await db.tasks.find_one({"_id": self.task_id}, {"status": 1})
             if task and task.get("status") == TaskStatus.CANCELLED.value:
@@ -520,6 +611,8 @@ class TaskOrchestrator:
         """Publish event to Redis pub/sub for WebSocket streaming."""
         try:
             redis = get_redis()
+            if redis is None:
+                return
             import json
             payload = json.dumps({
                 "event": event_type,

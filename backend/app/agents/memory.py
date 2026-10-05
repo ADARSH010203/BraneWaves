@@ -15,6 +15,7 @@ from app.agents.base import BaseAgent
 from app.database import get_db
 from app.models.agent import AgentType
 from app.rag.embeddings import generate_embedding
+from app.agents.context_utils import truncate_to_tokens
 
 logger = logging.getLogger("arc.agents.memory")
 
@@ -51,7 +52,7 @@ Rules:
         if not report_content and not report_summary:
             return {"nodes_created": 0, "edges_created": 0}
 
-        text_to_analyze = f"{report_summary}\n\n{report_content[:4000]}"
+        text_to_analyze = f"{report_summary}\n\n{truncate_to_tokens(report_content, max_tokens=1000)}"
 
         messages = [{
             "role": "user",
@@ -59,9 +60,12 @@ Rules:
         }]
 
         try:
+            from app.config import get_settings
+            settings = get_settings()
+
             result = await self.call_llm(
                 messages,
-                model="llama-3.1-8b-instant",
+                model=settings.FALLBACK_LLM_MODEL,
                 temperature=0.1,
                 max_tokens=1024,
                 response_format={"type": "json_object"},
@@ -107,7 +111,10 @@ Rules:
                 # Create new node
                 try:
                     embedding = await generate_embedding(label + " " + node_data.get("description", ""))
-                except Exception:
+                except Exception as e:
+                    import traceback
+                    print(f"\n\n[MemoryAgent Error] Failed to generate embedding for node '{label}': {e}")
+                    print(traceback.format_exc())
                     embedding = []
 
                 node_id = str(uuid.uuid4())

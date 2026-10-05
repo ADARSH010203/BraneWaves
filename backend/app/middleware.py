@@ -32,7 +32,7 @@ class TraceIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Response-Time-Ms"] = f"{elapsed_ms:.1f}"
 
         logger.info(
-            "[%s] %s %s → %s (%.1f ms)",
+            "[%s] %s %s -> %s (%.1f ms)",
             trace_id[:8],
             request.method,
             request.url.path,

@@ -9,6 +9,7 @@ export function useWebSocket(taskId: string | null) {
   const [events, setEvents] = useState<WSEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [latestEvent, setLatestEvent] = useState<WSEvent | null>(null);
+  const [streamedReport, setStreamedReport] = useState<string>("");
   const wsRef = useRef<TaskWebSocket | null>(null);
 
   useEffect(() => {
@@ -23,6 +24,8 @@ export function useWebSocket(taskId: string | null) {
     const unsub = ws.onEvent((event) => {
       if (event.event === "connected") {
         setConnected(true);
+      } else if (event.event === "token_stream") {
+        setStreamedReport((prev) => prev + ((event.chunk as string) || ""));
       } else {
         setEvents((prev) => [...prev, event]);
         setLatestEvent(event);
@@ -40,7 +43,8 @@ export function useWebSocket(taskId: string | null) {
   const clearEvents = useCallback(() => {
     setEvents([]);
     setLatestEvent(null);
+    setStreamedReport("");
   }, []);
 
-  return { events, connected, latestEvent, clearEvents };
+  return { events, connected, latestEvent, clearEvents, streamedReport };
 }

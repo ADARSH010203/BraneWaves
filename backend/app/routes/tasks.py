@@ -219,13 +219,13 @@ Instructions:
 - If asked for recommendations, base them on the report's data and conclusions"""
 
     try:
-        from groq import AsyncGroq
+        from app.agents.llm_client import chat_completion
+        from app.agents.base import BaseAgent
         from app.config import get_settings
+        from datetime import datetime, timezone
         settings = get_settings()
 
-        client = AsyncGroq(api_key=settings.GROQ_API_KEY)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": body.message},
@@ -241,17 +241,18 @@ Instructions:
         if usage:
             prompt_tokens = usage.prompt_tokens or 0
             completion_tokens = usage.completion_tokens or 0
-            # llama-3.3-70b pricing: $0.59/M input, $0.79/M output
-            cost_usd = (prompt_tokens * 0.59 / 1_000_000) + (completion_tokens * 0.79 / 1_000_000)
+            used_model = getattr(response, "model", settings.GROQ_MODEL) or settings.GROQ_MODEL
+            cost_usd = BaseAgent._estimate_cost(used_model, prompt_tokens, completion_tokens)
             await db.usage_cost.insert_one({
                 "user_id": user["_id"],
                 "task_id": task_id,
                 "agent_type": "chat",
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
+                "tokens_prompt": prompt_tokens,
+                "tokens_completion": completion_tokens,
+                "tokens_total": prompt_tokens + completion_tokens,
                 "cost_usd": cost_usd,
-                "model": "llama-3.3-70b-versatile",
+                "model_used": used_model,
+                "created_at": datetime.now(timezone.utc),
             })
 
         return {"reply": reply}

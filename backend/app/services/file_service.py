@@ -27,6 +27,24 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 ALLOWED_EXTENSIONS = {"pdf", "txt", "md", "csv", "json", "docx"}
 
 
+async def read_upload_file_capped(file, max_bytes: int | None = None) -> bytes:
+    """Read upload file in chunks, aborting early if file exceeds size limit."""
+    max_limit = max_bytes or (settings.MAX_FILE_SIZE_MB * 1024 * 1024)
+    chunk_size = 64 * 1024
+    total = 0
+    chunks = []
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_limit:
+            max_mb = max_limit // (1024 * 1024)
+            raise ValueError(f"File size exceeds {max_mb} MB limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _get_file_type(filename: str) -> FileType:
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     mapping = {

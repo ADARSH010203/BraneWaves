@@ -29,6 +29,15 @@ logger = logging.getLogger("arc.main")
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("🚀 Starting %s v%s [%s]", settings.APP_NAME, settings.APP_VERSION, settings.ENVIRONMENT)
+
+    # ── GROQ_API_KEY guard (only LLM provider) ────────────────────────
+    if not settings.GROQ_API_KEY:
+        logger.fatal(
+            "🚨 GROQ_API_KEY is missing or empty! "
+            "Both primary and fallback LLM calls require a valid Groq key. "
+            "Set GROQ_API_KEY in your .env file."
+        )
+
     await connect_db()
     await connect_redis()
     register_all_tools()

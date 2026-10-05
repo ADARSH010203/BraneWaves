@@ -46,6 +46,27 @@ class ToolRegistry:
             for t in self._tools.values()
         ]
 
+    def build_tool_schema(self, name: str) -> dict | None:
+        """Convert a registered tool's schema to OpenAI function-calling format."""
+        tool = self.get(name)
+        if not tool:
+            return None
+        
+        schema = tool.input_schema.model_json_schema()
+        # Clean up schema for OpenAI format (remove title, etc. if needed, but OpenAI usually ignores them)
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": schema.get("properties", {}),
+                    "required": schema.get("required", []),
+                }
+            }
+        }
+
     async def execute(
         self,
         tool_name: str,

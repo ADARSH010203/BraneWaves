@@ -27,7 +27,7 @@ export default function TaskDetailPage() {
     fetchTask, fetchSteps, fetchResult,
     loading, cancelTask,
   } = useTask();
-  const { events, connected, latestEvent } = useWebSocket(
+  const { events, connected, latestEvent, streamedReport } = useWebSocket(
     currentTask?.status === "running" || currentTask?.status === "planning" ? taskId : null
   );
 
@@ -53,6 +53,19 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (latestEvent) { fetchTask(taskId); fetchSteps(taskId); }
   }, [latestEvent, taskId, fetchTask, fetchSteps]);
+
+  // Polling fallback when WebSocket is offline/disconnected
+  useEffect(() => {
+    if (!taskId) return;
+    const isRunning = currentTask?.status === "running" || currentTask?.status === "planning";
+    if (isRunning && !connected) {
+      const interval = setInterval(() => {
+        fetchTask(taskId);
+        fetchSteps(taskId);
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [taskId, currentTask?.status, connected, fetchTask, fetchSteps]);
 
   // Close export dropdown on outside click
   useEffect(() => {
@@ -313,7 +326,7 @@ export default function TaskDetailPage() {
           {activeTab === "report" && (
             <div>
               {/* Final Executive Report */}
-              {result?.report ? (
+              {(result?.report || streamedReport) ? (
                 <motion.div initial={{opacity:0,y:30}} animate={{opacity:1,y:0}} transition={{delay:0.3, duration:0.6}} className="glass-card mt-8 p-8 md:p-12 border-t-4 border-t-purple-500">
           <div className="flex items-center justify-between gap-3 mb-8 pb-6 border-b border-white/10">
             <div className="flex items-center gap-3">
@@ -322,7 +335,7 @@ export default function TaskDetailPage() {
               </div>
               <div>
                 <h2 className="text-2xl font-black text-white tracking-tight">Executive Synthesis Report</h2>
-                <p className="text-sm font-mono text-purple-300 mt-1">Status: Verified via Critic Agent</p>
+                <p className="text-sm font-mono text-purple-300 mt-1">Status: {result?.report ? "Verified via Critic Agent" : "Generating Live..."}</p>
               </div>
             </div>
 
@@ -331,7 +344,7 @@ export default function TaskDetailPage() {
               <button
                 id="export-report-btn"
                 onClick={(e) => { e.stopPropagation(); setExportDropdownOpen(!exportDropdownOpen); }}
-                disabled={!!exporting}
+                disabled={!!exporting || !result?.report}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold border transition-all
                   bg-purple-500/10 text-purple-300 border-purple-500/20
                   hover:bg-purple-500/20 hover:border-purple-500/40 hover:shadow-[0_0_20px_rgba(168,85,247,0.15)]
@@ -352,7 +365,7 @@ export default function TaskDetailPage() {
               </button>
 
               <AnimatePresence>
-                {exportDropdownOpen && (
+                {exportDropdownOpen && result?.report && (
                   <motion.div
                     initial={{ opacity: 0, y: -5, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -403,11 +416,14 @@ export default function TaskDetailPage() {
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
             >
-              {result.report.content}
+              {result?.report?.content || streamedReport}
             </ReactMarkdown>
+            {!result?.report && (
+              <span className="inline-block w-2 h-4 bg-brand-400 animate-pulse ml-1 align-middle" />
+            )}
           </div>
           
-          {result.citations && result.citations.length > 0 && (
+          {result?.citations && result.citations.length > 0 && (
             <div className="mt-12 rounded-2xl bg-slate-900/60 border border-white/5 p-6">
               <h3 className="font-bold text-slate-200 mb-4 flex items-center gap-2">
                 <FileText className="h-4 w-4"/> Source Citations ({result.citations.length})

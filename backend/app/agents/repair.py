@@ -8,6 +8,8 @@ from typing import Any
 
 from app.agents.base import BaseAgent
 from app.models.agent import AgentType
+from app.models.agent_outputs import RepairOutput
+from app.agents.context_utils import compress_dependency_output, truncate_to_tokens
 
 
 class RepairAgent(BaseAgent):
@@ -20,14 +22,7 @@ class RepairAgent(BaseAgent):
 3. Generate a corrected output that satisfies the step's requirements
 4. Explain what went wrong and how you fixed it
 
-Output a JSON object:
-{
-  "root_cause": "What caused the failure",
-  "fix_description": "How you fixed it",
-  "corrected_output": { ... },  // The repaired output matching the step's expected format
-  "confidence": 0.0-1.0,
-  "prevention_suggestion": "How to prevent this in the future"
-}
+Output valid JSON matching the exact required schema.
 
 Rules:
 - Always provide a corrected_output
@@ -38,6 +33,12 @@ Rules:
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         error = input_data.get("error", "Unknown error")
         step = input_data.get("step", {})
+
+        input_data_dict = step.get('input_data', {})
+        if isinstance(input_data_dict, dict):
+            compressed_input = await compress_dependency_output(input_data_dict, max_tokens=3000)
+        else:
+            compressed_input = truncate_to_tokens(str(input_data_dict), max_tokens=800)
 
         messages = [
             {
@@ -50,7 +51,7 @@ Rules:
 **Error:** {error}
 
 **Step Input Data:**
-{str(step.get('input_data', {}))[:3000]}
+{compressed_input}
 
 **IMPORTANT — Expected Output Format by step type:**
 - research: {{ "summary": "...", "key_findings": [...], "citations": [...], "confidence": 0.0-1.0 }}
@@ -61,7 +62,7 @@ Rules:
 
 Your corrected_output MUST match the format for step type: {step.get('step_type', 'research')}
 
-Analyse the error and provide a repaired output as JSON.""",
+Analyse the error and provide a repaired output as JSON matching the RepairOutput schema.""",
             }
         ]
 
@@ -72,7 +73,9 @@ Analyse the error and provide a repaired output as JSON.""",
             response_format={"type": "json_object"},
         )
 
-        output = await self.parse_json_response(result["content"])
+        parsed_output = await self.parse_and_validate(result["content"], RepairOutput)
+        output = parsed_output.model_dump()
+
         output["tokens"] = result["tokens"]
         output["cost_usd"] = result["cost_usd"]
         return output

@@ -4,6 +4,7 @@ Access + refresh token creation and verification.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -19,6 +20,7 @@ def create_access_token(user_id: str, role: str = "user") -> str:
     payload = {
         "sub": user_id,
         "role": role,
+        "jti": str(uuid.uuid4()),
         "type": "access",
         "iat": now,
         "exp": now + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -31,6 +33,7 @@ def create_refresh_token(user_id: str) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
+        "jti": str(uuid.uuid4()),
         "type": "refresh",
         "iat": now,
         "exp": now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),

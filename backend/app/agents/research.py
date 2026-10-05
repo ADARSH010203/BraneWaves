@@ -10,6 +10,8 @@ from app.agents.base import BaseAgent
 from app.models.agent import AgentType
 from app.database import get_redis
 from app.config import get_settings
+from app.models.agent_outputs import ResearchOutput
+from app.agents.context_utils import compress_dependency_output
 import hashlib
 import json
 import logging
@@ -23,25 +25,15 @@ class ResearchAgent(BaseAgent):
     agent_type = AgentType.RESEARCH
     system_prompt = """You are an expert research agent. Your job is to:
 1. Understand the research question or topic given to you
-2. Use available tools (web_search, paper_search, vector_search) to gather information
+2. Use available tools to gather information
 3. Synthesise the findings into a structured summary
 4. Provide citations for every claim
 
-Output a JSON object:
-{
-  "summary": "Comprehensive summary of findings",
-  "key_findings": ["finding 1", "finding 2", ...],
-  "citations": [
-    {"title": "...", "url": "...", "type": "web|paper", "excerpt": "relevant passage"}
-  ],
-  "confidence": 0.0-1.0,
-  "gaps": ["areas where more research is needed"]
-}
-
+Output valid JSON matching the exact required schema.
 Be thorough, accurate, and always cite your sources."""
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        description = input_data.get("step_description", input_data.get("description", ""))
+        description = input_data.get("step_description") or input_data.get("description") or input_data.get("task_description") or input_data.get("query") or ""
         dep_outputs = input_data.get("dependency_outputs", {})
 
         # Build context from dependencies
@@ -49,41 +41,9 @@ Be thorough, accurate, and always cite your sources."""
         if dep_outputs:
             context = "\n\nPrevious findings:\n"
             for dep_id, output in dep_outputs.items():
-                if isinstance(output, dict) and "summary" in output:
-                    context += f"- {output['summary'][:500]}\n"
-
-        # Use tools to gather information
-        search_results = {}
-        try:
-            search_results = await self.execute_tool("web_search", {"query": description[:200]})
-        except Exception:
-            pass
-
-        paper_results = {}
-        try:
-            paper_results = await self.execute_tool("paper_search", {"query": description[:200]})
-        except Exception:
-            pass
-
-        # RAG vector search
-        rag_results = {}
-        try:
-            rag_results = await self.execute_tool("vector_search", {
-                "query": description[:200],
-                "user_id": self.user_id,
-                "top_k": 5,
-            })
-        except Exception:
-            pass
-
-        # Synthesise with LLM
-        tools_context = ""
-        if search_results.get("results"):
-            tools_context += f"\n\nWeb Search Results:\n{search_results['results'][:3000]}"
-        if paper_results.get("results"):
-            tools_context += f"\n\nAcademic Paper Results:\n{paper_results['results'][:3000]}"
-        if rag_results.get("results"):
-            tools_context += f"\n\nKnowledge Base Results:\n{rag_results['results'][:2000]}"
+                if isinstance(output, dict):
+                    compressed = await compress_dependency_output(output)
+                    context += f"- {compressed}\n"
 
         messages = [
             {
@@ -92,9 +52,9 @@ Be thorough, accurate, and always cite your sources."""
 
 **Topic:** {description}
 {context}
-{tools_context}
 
-Provide a comprehensive research summary as JSON.""",
+Use the available tools (web_search, paper_search, vector_search) to find real facts, extract key findings, and cite sources.
+Provide a comprehensive research summary as JSON matching the ResearchOutput schema.""",
             }
         ]
 
@@ -112,7 +72,8 @@ Provide a comprehensive research summary as JSON.""",
                 if cached_run:
                     logger.info("Cache hit for research agent: cache_key=%s task_id=%s", cache_key, self.task_id)
                     cached_data = json.loads(cached_run)
-                    output = await self.parse_json_response(cached_data["content"])
+                    parsed_output = await self.parse_and_validate(cached_data["content"], ResearchOutput)
+                    output = parsed_output.model_dump()
                     output["tokens"] = cached_data.get("tokens", 0)
                     output["cost_usd"] = cached_data.get("cost_usd", 0.0)
                     output["cache_hit"] = True
@@ -120,11 +81,11 @@ Provide a comprehensive research summary as JSON.""",
             except Exception as e:
                 logger.warning("Cache check failed: %s", e)
 
-        result = await self.call_llm(
-            messages,
-            temperature=0.3,
-            max_tokens=4096,
-            response_format={"type": "json_object"},
+        available_tools = ["web_search", "paper_search", "vector_search"]
+        result = await self.run_agentic_loop(
+            messages=messages,
+            available_tools=available_tools,
+            max_iterations=6
         )
 
         if settings.ENABLE_AGENT_CACHE and cache_key:
@@ -133,7 +94,32 @@ Provide a comprehensive research summary as JSON.""",
             except Exception as e:
                 logger.warning("Cache set failed: %s", e)
 
-        output = await self.parse_json_response(result["content"])
+        parsed_output = await self.parse_and_validate(result["content"], ResearchOutput)
+        output = parsed_output.model_dump()
+        
+        # Bug 3: Verify citations at the research step to catch hallucinations early
+        citations = output.get("citations", [])
+        verified_citations = []
+        for cit in citations:
+            url = cit.get("url")
+            excerpt = cit.get("excerpt")
+            if url:
+                try:
+                    verify_result = await self.execute_tool("citation_verify", {
+                        "url": url,
+                        "expected_content": excerpt
+                    })
+                    score = verify_result.get("verification_score", 0.0)
+                    if score >= 0.6:
+                        cit["verified"] = True
+                    else:
+                        cit["verified"] = False
+                except Exception:
+                    cit["verified"] = False
+            verified_citations.append(cit)
+        
+        output["citations"] = verified_citations
+
         output["tokens"] = result["tokens"]
         output["cost_usd"] = result["cost_usd"]
         output["cache_hit"] = False
