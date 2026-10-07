@@ -32,6 +32,7 @@ from app.models.agent_outputs import (
     ReportOutput,
     PlannerOutput,
 )
+from app.services.plan_validation import PlanValidationError, validate_plan_steps
 
 logger = logging.getLogger("arc.orchestrator")
 settings = get_settings()
@@ -128,17 +129,16 @@ class TaskOrchestrator:
             await self._fail_task(str(e))
             return {"error": str(e)}
 
-        # Save plan and create steps
-        # Final report generation is owned by Phase 3; ignore legacy planner
-        # report steps to prevent duplicate report execution/cost.
-        steps = [
-            step for step in plan.get("steps", [])
-            if step.get("type") != StepType.REPORT.value
-        ]
+        # Validate the Planner DAG before persisting or executing anything.
+        # Critic, Repair, and Report are orchestrator-owned and can never appear
+        # as planner-generated executable steps.
+        steps = plan.get("steps", [])
         task_budget = task_doc.get("budget", {})
         max_steps = int(task_budget.get("max_steps", settings.MAX_STEPS_PER_TASK))
-        if len(steps) > max_steps:
-            error = f"Planner produced {len(steps)} steps, exceeding task limit of {max_steps}"
+        try:
+            validate_plan_steps(steps, max_steps)
+        except PlanValidationError as exc:
+            error = str(exc)
             await self._fail_task(error)
             return {"error": error}
         await db.tasks.update_one(
@@ -170,10 +170,11 @@ class TaskOrchestrator:
                 "created_at": datetime.now(timezone.utc),
             })
 
-        # BUG-01 FIX: Resolve planner's string IDs to actual UUIDs
+        # Resolve validated planner IDs to persisted UUIDs. The validator
+        # guarantees every dependency exists, so nothing is silently dropped.
         idx_to_uuid = {s["id"]: s["_id"] for s in step_docs}
         for s in step_docs:
-            s["depends_on"] = [idx_to_uuid[d] for d in s["depends_on"] if d in idx_to_uuid]
+            s["depends_on"] = [idx_to_uuid[d] for d in s["depends_on"]]
 
         if step_docs:
             await db.task_steps.insert_many(step_docs)
