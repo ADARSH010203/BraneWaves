@@ -5,7 +5,42 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.agent_outputs import StepDefinition
-from app.services.plan_validation import PlanValidationError, validate_plan_steps
+from app.services.plan_validation import (
+    PlanValidationError,
+    ensure_knowledge_grounding_step,
+    validate_plan_steps,
+)
+
+
+def test_kb_grounding_is_injected_when_plan_has_no_root_research():
+    steps = [
+        {"id": "data_a", "type": "data", "depends_on": []},
+        {"id": "code_b", "type": "code", "depends_on": []},
+    ]
+    grounded, changed = ensure_knowledge_grounding_step(
+        steps,
+        knowledge_available=True,
+    )
+    assert changed is True
+    assert grounded[0]["type"] == "research"
+    grounding_id = grounded[0]["id"]
+    assert grounded[1]["depends_on"] == [grounding_id]
+    assert grounded[2]["depends_on"] == [grounding_id]
+
+
+def test_existing_root_research_becomes_grounding_gate():
+    steps = [
+        {"id": "research_a", "type": "research", "depends_on": []},
+        {"id": "data_b", "type": "data", "depends_on": []},
+        {"id": "code_c", "type": "code", "depends_on": ["data_b"]},
+    ]
+    grounded, changed = ensure_knowledge_grounding_step(
+        steps,
+        knowledge_available=True,
+    )
+    assert changed is True
+    assert grounded[1]["depends_on"] == ["research_a"]
+    assert grounded[2]["depends_on"] == ["data_b"]
 
 
 def test_valid_parallel_dag_is_accepted():
