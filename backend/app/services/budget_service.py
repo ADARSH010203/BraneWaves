@@ -32,14 +32,17 @@ async def reserve_task_budget(
     task_id: str,
     user_id: str,
     amount_usd: float,
+    *,
+    allow_completed: bool = False,
 ) -> None:
     """Atomically reserve task budget, accounting for concurrent LLM calls."""
     amount_usd = max(0.0, float(amount_usd))
+    blocked_statuses = ["failed", "cancelled"] if allow_completed else ["failed", "cancelled", "completed"]
     result = await db.tasks.update_one(
         {
             "_id": task_id,
             "user_id": user_id,
-            "status": {"$nin": ["failed", "cancelled", "completed"]},
+            "status": {"$nin": blocked_statuses},
             "$expr": {
                 "$lte": [
                     {
