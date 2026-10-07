@@ -34,9 +34,12 @@ class PlannerOutput(BaseModel):
 
 class CitationDefinition(BaseModel):
     title: str = Field(default="", description="Title of the source")
-    url: str = Field(default="", description="URL of the source")
-    type: str = Field(default="web", description="Type of the source (e.g. web, paper)")
+    url: str = Field(default="", description="URL or local source reference")
+    type: str = Field(default="web", description="Source type: web, paper, dataset, file, or code")
     excerpt: str = Field(default="", description="Relevant passage or claim from the source")
+    file_id: Optional[str] = Field(default=None, description="Local knowledge-base file ID")
+    page_number: Optional[int] = Field(default=None, ge=1, description="Source page for paginated local documents")
+    chunk_id: Optional[str] = Field(default=None, description="RAG chunk ID used as evidence")
 
 class ResearchOutput(BaseModel):
     summary: str = Field(default="", description="Comprehensive summary of findings")
