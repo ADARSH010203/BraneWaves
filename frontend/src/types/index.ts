@@ -44,6 +44,8 @@ export interface Task {
     status: TaskStatus;
     budget: TaskBudget;
     tags: string[];
+    use_knowledge_base: boolean;
+    selected_file_ids: string[];
     plan?: Record<string, unknown>;
     result_summary?: string;
     report_id?: string;
@@ -80,6 +82,20 @@ export interface TaskListResponse {
     page_size: number;
 }
 
+
+// ── Knowledge Base ──────────────────────────────────────────────────
+export interface KnowledgeDocument {
+    id: string;
+    filename: string;
+    original_name: string;
+    content_type: string;
+    file_type: "pdf" | "txt" | "md" | "csv" | "json" | "docx" | "other";
+    size_bytes: number;
+    is_indexed: boolean;
+    task_id?: string;
+    created_at: string;
+}
+
 // ── Report / Citation ────────────────────────────────────────────────
 export interface Report {
     id: string;
@@ -107,6 +123,9 @@ export interface Citation {
     relevance_score: number;
     verified: boolean;
     verification_note?: string;
+    file_id?: string;
+    page_number?: number;
+    chunk_id?: string;
 }
 
 export interface TaskResult {

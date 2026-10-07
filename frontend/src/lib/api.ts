@@ -133,10 +133,24 @@ class ApiClient {
         return this.request<any>("/templates");
     }
 
-    async createTask(title: string, description: string, budget_usd?: number, tags?: string[]) {
+    async createTask(
+        title: string,
+        description: string,
+        budget_usd?: number,
+        tags?: string[],
+        use_knowledge_base = true,
+        selected_file_ids: string[] = [],
+    ) {
         return this.request<any>("/tasks", {
             method: "POST",
-            body: JSON.stringify({ title, description, budget_usd, tags: tags || [] }),
+            body: JSON.stringify({
+                title,
+                description,
+                budget_usd,
+                tags: tags || [],
+                use_knowledge_base,
+                selected_file_ids,
+            }),
         });
     }
 

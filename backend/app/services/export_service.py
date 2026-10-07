@@ -268,11 +268,16 @@ class ExportService:
                 cit_url = cit.get("url", "")
                 cit_type = cit.get("citation_type", "web")
                 cit_excerpt = _escape_html(cit.get("excerpt", "")) if cit.get("excerpt") else ""
+                page_number = cit.get("page_number")
 
                 entry = f"<b>[{i}]</b> {cit_title}"
-                if cit_url:
-                    entry += f' — <font color="#6366f1"><link href="{cit_url}">{cit_url}</link></font>'
-                entry += f' <font color="#94a3b8">[{cit_type}]</font>'
+                if cit_type == "file" or str(cit_url).startswith("local://file/"):
+                    location = f", page {page_number}" if page_number else ""
+                    entry += f' <font color="#94a3b8">[local document{location}]</font>'
+                else:
+                    if cit_url:
+                        entry += f' — <font color="#6366f1"><link href="{cit_url}">{cit_url}</link></font>'
+                    entry += f' <font color="#94a3b8">[{cit_type}]</font>'
                 if cit_excerpt:
                     entry += f'<br/><font color="#64748b"><i>"{cit_excerpt[:200]}"</i></font>'
 
@@ -411,6 +416,7 @@ class ExportService:
                 cit_url = cit.get("url", "")
                 cit_type = cit.get("citation_type", "web")
                 cit_excerpt = cit.get("excerpt", "")
+                page_number = cit.get("page_number")
 
                 p = doc.add_paragraph()
                 run = p.add_run(f"[{i}] ")
@@ -422,12 +428,15 @@ class ExportService:
                 run.font.size = Pt(9)
                 run.font.color.rgb = RGBColor(51, 65, 85)
 
-                if cit_url:
-                    run = p.add_run(f" — {cit_url}")
-                    run.font.size = Pt(9)
-                    run.font.color.rgb = RGBColor(99, 102, 241)
-
-                run = p.add_run(f" [{cit_type}]")
+                if cit_type == "file" or str(cit_url).startswith("local://file/"):
+                    location = f", page {page_number}" if page_number else ""
+                    run = p.add_run(f" [local document{location}]")
+                else:
+                    if cit_url:
+                        run = p.add_run(f" — {cit_url}")
+                        run.font.size = Pt(9)
+                        run.font.color.rgb = RGBColor(99, 102, 241)
+                    run = p.add_run(f" [{cit_type}]")
                 run.font.size = Pt(9)
                 run.font.color.rgb = RGBColor(148, 163, 184)
 
