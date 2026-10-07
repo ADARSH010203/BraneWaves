@@ -242,6 +242,7 @@ Instructions:
     except BudgetReservationError as e:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(e))
 
+    reservation_active = True
     try:
         response = await chat_completion(
             messages=messages,
@@ -258,6 +259,7 @@ Instructions:
         used_model = getattr(response, "model", settings.GROQ_MODEL) or settings.GROQ_MODEL
         cost_usd = BaseAgent._estimate_cost(used_model, prompt_tokens, completion_tokens)
         await finalize_task_budget(db, task_id, user["_id"], reserved_usd, cost_usd)
+        reservation_active = False
 
         await db.usage_cost.insert_one({
             "user_id": user["_id"],
@@ -274,10 +276,12 @@ Instructions:
         return {"reply": reply}
 
     except HTTPException:
-        await release_task_budget(db, task_id, user["_id"], reserved_usd)
+        if reservation_active:
+            await release_task_budget(db, task_id, user["_id"], reserved_usd)
         raise
     except Exception as e:
-        await release_task_budget(db, task_id, user["_id"], reserved_usd)
+        if reservation_active:
+            await release_task_budget(db, task_id, user["_id"], reserved_usd)
         logger.exception("Report chat failed for task %s: %s", task_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
