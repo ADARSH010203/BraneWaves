@@ -10,6 +10,47 @@ class PlanValidationError(ValueError):
     """Raised when a Planner DAG is structurally unsafe or invalid."""
 
 
+def ensure_knowledge_grounding_step(
+    steps: list[dict[str, Any]],
+    *,
+    knowledge_available: bool,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Guarantee one private-document grounding step when KB evidence exists.
+
+    If the Planner already produced a research step, no change is needed.
+    Otherwise a root research step is injected and all original root steps
+    depend on it so Data/Code branches receive the grounded evidence.
+    """
+    if not knowledge_available or any(step.get("type") == "research" for step in steps):
+        return steps, False
+
+    existing_ids = {str(step.get("id", "")) for step in steps}
+    grounding_id = "kb_grounding"
+    suffix = 1
+    while grounding_id in existing_ids:
+        suffix += 1
+        grounding_id = f"kb_grounding_{suffix}"
+
+    grounding_step = {
+        "id": grounding_id,
+        "type": "research",
+        "title": "Ground task in private knowledge",
+        "description": (
+            "Retrieve and summarize the most relevant evidence from the task's "
+            "selected Knowledge Base documents before downstream analysis."
+        ),
+        "depends_on": [],
+        "input_data": {"query": "Ground the task in the selected private documents."},
+    }
+
+    for step in steps:
+        deps = list(step.get("depends_on", []))
+        if not deps:
+            step["depends_on"] = [grounding_id]
+
+    return [grounding_step, *steps], True
+
+
 def validate_plan_steps(steps: list[dict[str, Any]], max_steps: int) -> list[dict[str, Any]]:
     """Validate IDs, step types, references and acyclicity before execution."""
     if not steps:
