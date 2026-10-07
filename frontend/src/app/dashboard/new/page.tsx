@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTask } from "@/hooks/useTask";
 import { api } from "@/lib/api";
-import { ArrowRight, ArrowLeft, AlertCircle, Rocket, FileText, Settings2, CheckCircle2, X, Sparkles, Brain } from "lucide-react";
+import { ArrowRight, ArrowLeft, AlertCircle, Rocket, FileText, Settings2, CheckCircle2, X, Sparkles, Brain, UploadCloud, Library } from "lucide-react";
+import type { KnowledgeDocument } from "@/types";
 
 const STEPS = [
   { label: "Describe", icon: FileText, desc: "Define your research objective" },
@@ -25,6 +26,10 @@ export default function NewTaskPage() {
   const [error, setError] = useState("");
   const [templates, setTemplates] = useState<any[]>([]);
   const [memoryResults, setMemoryResults] = useState<any[]>([]);
+  const [kbDocs, setKbDocs] = useState<KnowledgeDocument[]>([]);
+  const [knowledgeMode, setKnowledgeMode] = useState<"all" | "selected" | "none">("all");
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [kbUploading, setKbUploading] = useState(false);
 
   useEffect(() => {
     async function loadTemplates() {
@@ -35,7 +40,16 @@ export default function NewTaskPage() {
         console.error("Failed to load templates", err);
       }
     }
+    async function loadKnowledgeBase() {
+      try {
+        const docs = await api.getKBDocuments();
+        setKbDocs(docs || []);
+      } catch (err) {
+        console.error("Failed to load knowledge base", err);
+      }
+    }
     loadTemplates();
+    loadKnowledgeBase();
   }, []);
 
   // Debounced memory search
@@ -69,10 +83,47 @@ export default function NewTaskPage() {
 
   const removeTag = (tag: string) => setTags(tags.filter(t => t !== tag));
 
+  const toggleDocument = (fileId: string) => {
+    setSelectedFileIds(prev =>
+      prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
+    );
+  };
+
+  const handleKnowledgeUpload = async (file?: File) => {
+    if (!file) return;
+    setError("");
+    setKbUploading(true);
+    try {
+      const uploaded = await api.uploadKBFile(file);
+      const docs = await api.getKBDocuments();
+      setKbDocs(docs || []);
+      setKnowledgeMode("selected");
+      if (uploaded?.id) {
+        setSelectedFileIds(prev => prev.includes(uploaded.id) ? prev : [...prev, uploaded.id]);
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to upload knowledge document");
+    } finally {
+      setKbUploading(false);
+    }
+  };
+
   const handleSubmit = async () => {
     setError("");
+    if (knowledgeMode === "selected" && selectedFileIds.length === 0) {
+      setError("Select at least one indexed knowledge-base document, or choose All/No KB.");
+      setStep(1);
+      return;
+    }
     try {
-      const task = await createTask(title, description, budget, tags);
+      const task = await createTask(
+        title,
+        description,
+        budget,
+        tags,
+        knowledgeMode !== "none",
+        knowledgeMode === "selected" ? selectedFileIds : [],
+      );
       router.push(`/dashboard/tasks/${task.id}`);
     } catch (e: any) { setError(e.message || "Failed"); }
   };
