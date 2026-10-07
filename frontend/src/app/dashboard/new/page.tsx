@@ -281,9 +281,109 @@ export default function NewTaskPage() {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-sm font-bold mb-3 text-white flex items-center gap-2">
+                  <Library className="h-4 w-4 text-brand-400" />
+                  Knowledge Grounding
+                </label>
+                <p className="text-xs text-slate-500 mb-3">
+                  Research agents automatically retrieve relevant chunks from the scope you choose here.
+                </p>
+
+                <div className="grid sm:grid-cols-3 gap-2 mb-4">
+                  {[
+                    { id: "all", label: "All KB", desc: "Search every indexed document" },
+                    { id: "selected", label: "Selected", desc: "Use only chosen documents" },
+                    { id: "none", label: "No KB", desc: "Public research only" },
+                  ].map(option => (
+                    <button key={option.id} type="button"
+                      onClick={() => setKnowledgeMode(option.id as "all" | "selected" | "none")}
+                      className={`text-left p-3 rounded-xl border transition-all ${
+                        knowledgeMode === option.id
+                          ? "bg-brand-500/10 border-brand-500/40 text-white"
+                          : "bg-slate-900/40 border-white/5 text-slate-400 hover:border-white/15"
+                      }`}>
+                      <p className="text-sm font-bold">{option.label}</p>
+                      <p className="text-[11px] text-slate-500 mt-1">{option.desc}</p>
+                    </button>
+                  ))}
+                </div>
+
+                {knowledgeMode !== "none" && (
+                  <div className="rounded-xl border border-white/5 bg-slate-900/40 p-4">
+                    <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between mb-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-200">
+                          {kbDocs.filter(d => d.is_indexed).length} indexed document{kbDocs.filter(d => d.is_indexed).length === 1 ? "" : "s"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          PDF and DOCX sources retain file/page provenance for citations.
+                        </p>
+                      </div>
+                      <label className="btn-ghost text-xs px-3 py-2 inline-flex items-center gap-2 cursor-pointer">
+                        <UploadCloud className="h-4 w-4" />
+                        {kbUploading ? "Uploading..." : "Upload & use"}
+                        <input
+                          type="file"
+                          className="hidden"
+                          disabled={kbUploading}
+                          accept=".pdf,.docx,.txt,.md,.csv,.json"
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            void handleKnowledgeUpload(file);
+                            e.currentTarget.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+
+                    {knowledgeMode === "all" && (
+                      <p className="text-xs text-emerald-400">
+                        All indexed Knowledge Base documents will be available to automatic RAG retrieval.
+                      </p>
+                    )}
+
+                    {knowledgeMode === "selected" && (
+                      <div className="space-y-2 max-h-56 overflow-y-auto custom-scrollbar">
+                        {kbDocs.filter(d => d.is_indexed).length === 0 ? (
+                          <p className="text-xs text-slate-500">No indexed documents yet. Upload one above.</p>
+                        ) : kbDocs.map(doc => (
+                          <label key={doc.id}
+                            className={`flex items-center gap-3 p-3 rounded-lg border ${
+                              doc.is_indexed ? "border-white/5 cursor-pointer hover:bg-white/[0.03]" : "border-white/5 opacity-50"
+                            }`}>
+                            <input
+                              type="checkbox"
+                              disabled={!doc.is_indexed}
+                              checked={selectedFileIds.includes(doc.id)}
+                              onChange={() => toggleDocument(doc.id)}
+                              className="accent-indigo-500"
+                            />
+                            <div className="min-w-0">
+                              <p className="text-sm text-slate-200 truncate">{doc.original_name}</p>
+                              <p className="text-[10px] text-slate-500 uppercase">{doc.file_type}</p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-between">
                 <button onClick={() => setStep(0)} className="btn-ghost flex items-center gap-2"><ArrowLeft className="h-4 w-4" />Back</button>
-                <button onClick={() => setStep(2)} className="btn-brand flex items-center gap-2 px-8">Review <ArrowRight className="h-4 w-4" /></button>
+                <button onClick={() => {
+                    if (knowledgeMode === "selected" && selectedFileIds.length === 0) {
+                      setError("Select at least one indexed document or choose All KB/No KB.");
+                      return;
+                    }
+                    setError("");
+                    setStep(2);
+                  }}
+                  className="btn-brand flex items-center gap-2 px-8">
+                  Review <ArrowRight className="h-4 w-4" />
+                </button>
               </div>
             </div>
           )}
@@ -307,6 +407,16 @@ export default function NewTaskPage() {
                       <span key={t} className="px-2 py-0.5 rounded bg-brand-500/10 text-brand-300 text-xs">{t}</span>
                     )) : <span className="text-slate-500 text-xs">None</span>}
                   </div>
+                </div>
+                <div className="flex justify-between px-5 py-4 gap-4">
+                  <span className="text-slate-400 text-sm font-medium">Knowledge Base</span>
+                  <span className="text-sm text-right text-slate-200">
+                    {knowledgeMode === "none"
+                      ? "Disabled"
+                      : knowledgeMode === "all"
+                        ? `All indexed docs (${kbDocs.filter(d => d.is_indexed).length})`
+                        : `${selectedFileIds.length} selected document${selectedFileIds.length === 1 ? "" : "s"}`}
+                  </span>
                 </div>
                 <div className="px-5 py-4">
                   <span className="text-slate-400 text-sm font-medium block mb-2">Description</span>
