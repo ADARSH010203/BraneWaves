@@ -46,6 +46,8 @@ async def create_new_task(data: TaskCreate, db: DbDep, user: UserDep):
         return await create_task(db, user["_id"], data)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
 @router.get("", response_model=TaskListResponse)
@@ -218,50 +220,70 @@ Instructions:
 - Reference specific findings from the report when relevant
 - If asked for recommendations, base them on the report's data and conclusions"""
 
-    try:
-        from app.agents.llm_client import chat_completion
-        from app.agents.base import BaseAgent
-        from app.config import get_settings
-        from datetime import datetime, timezone
-        settings = get_settings()
+    from app.agents.llm_client import chat_completion
+    from app.agents.base import BaseAgent
+    from app.config import get_settings
+    from app.services.budget_service import (
+        BudgetReservationError,
+        estimate_llm_reservation,
+        finalize_task_budget,
+        release_task_budget,
+        reserve_task_budget,
+    )
+    from datetime import datetime, timezone
 
+    settings = get_settings()
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": body.message},
+    ]
+    reserved_usd = estimate_llm_reservation(messages, 2048)
+
+    try:
+        await reserve_task_budget(db, task_id, user["_id"], reserved_usd, allow_completed=True)
+    except BudgetReservationError as e:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(e))
+
+    reservation_active = True
+    try:
         response = await chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": body.message},
-            ],
+            messages=messages,
             temperature=0.3,
             max_tokens=2048,
         )
 
         reply = response.choices[0].message.content or "I couldn't generate a response."
 
-        # Track cost
+        # Track cost and settle the reservation.
         usage = response.usage
-        if usage:
-            prompt_tokens = usage.prompt_tokens or 0
-            completion_tokens = usage.completion_tokens or 0
-            used_model = getattr(response, "model", settings.GROQ_MODEL) or settings.GROQ_MODEL
-            cost_usd = BaseAgent._estimate_cost(used_model, prompt_tokens, completion_tokens)
-            await db.usage_cost.insert_one({
-                "user_id": user["_id"],
-                "task_id": task_id,
-                "agent_type": "chat",
-                "tokens_prompt": prompt_tokens,
-                "tokens_completion": completion_tokens,
-                "tokens_total": prompt_tokens + completion_tokens,
-                "cost_usd": cost_usd,
-                "model_used": used_model,
-                "created_at": datetime.now(timezone.utc),
-            })
-            await db.tasks.update_one(
-                {"_id": task_id, "user_id": user["_id"]},
-                {"$inc": {"budget.spent_usd": cost_usd}},
-            )
+        prompt_tokens = usage.prompt_tokens if usage else 0
+        completion_tokens = usage.completion_tokens if usage else 0
+        used_model = getattr(response, "model", settings.GROQ_MODEL) or settings.GROQ_MODEL
+        cost_usd = BaseAgent._estimate_cost(used_model, prompt_tokens, completion_tokens)
+        await finalize_task_budget(db, task_id, user["_id"], reserved_usd, cost_usd)
+        reservation_active = False
+
+        await db.usage_cost.insert_one({
+            "user_id": user["_id"],
+            "task_id": task_id,
+            "agent_type": "chat",
+            "tokens_prompt": prompt_tokens,
+            "tokens_completion": completion_tokens,
+            "tokens_total": prompt_tokens + completion_tokens,
+            "cost_usd": cost_usd,
+            "model_used": used_model,
+            "created_at": datetime.now(timezone.utc),
+        })
 
         return {"reply": reply}
 
+    except HTTPException:
+        if reservation_active:
+            await release_task_budget(db, task_id, user["_id"], reserved_usd)
+        raise
     except Exception as e:
+        if reservation_active:
+            await release_task_budget(db, task_id, user["_id"], reserved_usd)
         logger.exception("Report chat failed for task %s: %s", task_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

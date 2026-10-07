@@ -86,17 +86,27 @@ class TaskOrchestrator:
         """Main entry point: plan → execute → report."""
         db = get_db()
 
-        # Update task status
-        await db.tasks.update_one(
-            {"_id": self.task_id},
-            {"$set": {"status": TaskStatus.PLANNING.value, "updated_at": datetime.now(timezone.utc)}},
-        )
-        await self._emit_event("task_status", {"status": "planning"})
-
         # ── Phase 1: Planning ────────────────────────────────────────────
-        task_doc = await db.tasks.find_one({"_id": self.task_id})
+        # Read the task before mutating its state so a task cancelled while it
+        # was queued never incurs a Planner LLM call.
+        task_doc = await db.tasks.find_one({"_id": self.task_id, "user_id": self.user_id})
         if not task_doc:
             raise ValueError(f"Task {self.task_id} not found")
+        if task_doc.get("status") == TaskStatus.CANCELLED.value:
+            return {"status": "cancelled", "task_id": self.task_id}
+        try:
+            await self._check_cancellation()
+        except TaskCancelledException:
+            await self._cancel_task()
+            return {"status": "cancelled", "task_id": self.task_id}
+
+        planning_update = await db.tasks.update_one(
+            {"_id": self.task_id, "user_id": self.user_id, "status": {"$ne": TaskStatus.CANCELLED.value}},
+            {"$set": {"status": TaskStatus.PLANNING.value, "updated_at": datetime.now(timezone.utc)}},
+        )
+        if planning_update.modified_count != 1:
+            return {"status": "cancelled", "task_id": self.task_id}
+        await self._emit_event("task_status", {"status": "planning"})
 
         planner = PlannerAgent(
             task_id=self.task_id,
@@ -193,7 +203,11 @@ class TaskOrchestrator:
             )
             return {"error": "Task budget exhausted before report generation"}
 
-        await self._generate_report()
+        report_generated = await self._generate_report()
+        if not report_generated:
+            error = "Final report generation failed"
+            await self._fail_task(error)
+            return {"error": error}
 
         # ── Complete ─────────────────────────────────────────────────────
         await db.tasks.update_one(
@@ -487,8 +501,8 @@ class TaskOrchestrator:
             await repair.complete_run({}, status=AgentRunStatus.FAILED, error=str(e))
             return False
 
-    async def _generate_report(self) -> None:
-        """Generate final report from all step outputs."""
+    async def _generate_report(self) -> bool:
+        """Generate and persist the final report. Return True only on success."""
         db = get_db()
 
         # Gather all completed step outputs
@@ -575,9 +589,12 @@ class TaskOrchestrator:
                 import traceback
                 logger.error("MemoryAgent failed (non-critical) with exception: %s\n%s", e, traceback.format_exc())
 
+            return True
+
         except Exception as e:
             await report_agent.complete_run({}, status=AgentRunStatus.FAILED, error=str(e))
             logger.error("Report generation failed for task %s: %s", self.task_id, e)
+            return False
 
     async def _check_cancellation(self) -> None:
         """Check Redis for cancellation flag. Raises TaskCancelledException if set."""

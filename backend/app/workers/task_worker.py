@@ -44,6 +44,8 @@ async def worker_loop() -> None:
     logger.info("🔧 Worker started — waiting for tasks...")
 
     redis = get_redis()
+    if redis is None:
+        raise RuntimeError("Redis is required for the background worker")
 
     # Recover jobs left in the processing list by a previously crashed worker.
     while True:

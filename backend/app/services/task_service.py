@@ -77,14 +77,20 @@ async def create_task(db: AsyncIOMotorDatabase, user_id: str, data: TaskCreate) 
         )
         logger.info("Task enqueued: %s", task_id)
     except Exception as e:
+        if settings.ENVIRONMENT == "production":
+            # A production API process is not a durable job queue. Roll back the
+            # task creation so callers can retry cleanly when Redis recovers.
+            await db.tasks.delete_one({"_id": task_id, "user_id": user_id})
+            logger.error("Redis unavailable in production; task %s was not accepted: %s", task_id, e)
+            raise RuntimeError("Task queue is unavailable. Please try again shortly.") from e
+
         logger.warning(
-            "Redis unavailable, using IN-MEMORY execution fallback for task %s (Error: %s)", 
-            task_id, e
+            "Redis unavailable, using development-only in-memory execution fallback for task %s (Error: %s)",
+            task_id, e,
         )
-        # Fallback for college project so it always works even if Redis isn't running
         import asyncio
         from app.agents.orchestrator import TaskOrchestrator
-        
+
         async def run_orchestrator_fallback():
             logger.info("Starting in-memory orchestrator for %s", task_id)
             try:
@@ -92,8 +98,7 @@ async def create_task(db: AsyncIOMotorDatabase, user_id: str, data: TaskCreate) 
                 await orchestrator.execute()
             except Exception as ex:
                 logger.exception("In-memory orchestrator failed for %s: %s", task_id, ex)
-                
-        # Run it in background asyncio loop instead of Redis queue
+
         asyncio.create_task(run_orchestrator_fallback())
 
     return TaskResponse(

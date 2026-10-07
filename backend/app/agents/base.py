@@ -103,16 +103,30 @@ class BaseAgent(ABC):
             messages = [{"role": "system", "content": self.system_prompt}] + messages
 
         from app.agents.llm_client import chat_completion
+        from app.services.budget_service import (
+            estimate_llm_reservation,
+            finalize_task_budget,
+            release_task_budget,
+            reserve_task_budget,
+        )
 
-        with Timer(f"llm_call.{self.agent_type.value}"):
-            response = await chat_completion(
-                messages=messages,
-                model=model,
-                temperature=temp,
-                max_tokens=max_tokens,
-                response_format=response_format,
-                tools=tools,
-            )
+        db = get_db()
+        reserved_usd = estimate_llm_reservation(messages, max_tokens)
+        await reserve_task_budget(db, self.task_id, self.user_id, reserved_usd)
+
+        try:
+            with Timer(f"llm_call.{self.agent_type.value}"):
+                response = await chat_completion(
+                    messages=messages,
+                    model=model,
+                    temperature=temp,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
+                    tools=tools,
+                )
+        except Exception:
+            await release_task_budget(db, self.task_id, self.user_id, reserved_usd)
+            raise
 
         # Extract usage
         usage = response.usage
@@ -122,6 +136,7 @@ class BaseAgent(ABC):
 
         used_model = response.model or model or settings.GROQ_MODEL
         cost_usd = self._estimate_cost(used_model, prompt_tokens, completion_tokens)
+        await finalize_task_budget(db, self.task_id, self.user_id, reserved_usd, cost_usd)
 
         self._total_cost += cost_usd
         self._total_tokens += total_tokens
@@ -337,11 +352,6 @@ class BaseAgent(ABC):
             "created_at": datetime.now(timezone.utc),
         }
         await db.usage_cost.insert_one(doc)
-        # Keep the embedded task budget in sync with the authoritative usage log.
-        await db.tasks.update_one(
-            {"_id": self.task_id, "user_id": self.user_id},
-            {"$inc": {"budget.spent_usd": cost_usd}},
-        )
 
     # ── Helpers ──────────────────────────────────────────────────────────
     async def parse_json_response(self, content: str) -> dict[str, Any]:
