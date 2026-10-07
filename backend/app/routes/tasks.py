@@ -240,7 +240,7 @@ Instructions:
     reserved_usd = estimate_llm_reservation(messages, 2048)
 
     try:
-        await reserve_task_budget(db, task_id, user["_id"], reserved_usd)
+        await reserve_task_budget(db, task_id, user["_id"], reserved_usd, allow_completed=True)
     except BudgetReservationError as e:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(e))
 
