@@ -371,32 +371,38 @@ class TaskOrchestrator:
             output = await agent.run(input_data)
             confidence = output.get("confidence", 0.5)
 
-            # Run critic on output
-            if agent_type != AgentType.CRITIC.value and agent_type != AgentType.REPAIR.value:
+            # Every executable step receives exactly one automatic Critic pass.
+            # Critic.confidence means confidence in the critique itself; output
+            # quality is represented by quality_score (0-5).
+            if agent_type not in (AgentType.CRITIC.value, AgentType.REPAIR.value):
                 critic_result = await self._run_critic(sid, output)
-                confidence = critic_result.get("confidence", confidence)
+                critic_verdict = critic_result.get("verdict", "pass")
+                quality_score = float(critic_result.get("quality_score", 2.5))
+                quality_confidence = max(0.0, min(1.0, quality_score / 5.0))
+                confidence = min(float(confidence), quality_confidence)
                 output["critic_feedback"] = critic_result
 
-                # Trigger repair if critic verdict is bad
-                critic_verdict = critic_result.get("verdict", "pass")
-                if critic_verdict in ("fail", "needs_revision") and confidence < settings.CRITIC_CONFIDENCE_THRESHOLD:
+                if critic_verdict in ("fail", "needs_revision"):
                     logger.warning(
-                        "Critic flagged step %s as '%s' (confidence=%.2f). Attempting repair.",
-                        sid, critic_verdict, confidence
+                        "Critic rejected step %s as '%s' (quality=%.2f/5). Attempting repair.",
+                        sid, critic_verdict, quality_score,
                     )
                     await self._emit_event("step_status", {
                         "step_id": sid,
                         "status": "critic_repair",
                         "verdict": critic_verdict,
-                        "confidence": confidence,
+                        "quality_score": quality_score,
                     })
-                    repair_error = critic_result.get("feedback", f"Critic verdict: {critic_verdict}")
+                    repair_error = critic_result.get("feedback") or f"Critic verdict: {critic_verdict}"
                     repaired = await self._attempt_repair(step, repair_error)
-                    if repaired:
-                        repaired_step = await db.task_steps.find_one({"_id": sid})
-                        if repaired_step and repaired_step.get("output_data"):
-                            output = repaired_step["output_data"]
-                            confidence = 0.6
+                    if not repaired:
+                        raise RuntimeError(
+                            f"Critic rejected step output and repair failed: {repair_error}"
+                        )
+                    repaired_step = await db.task_steps.find_one({"_id": sid})
+                    if repaired_step and repaired_step.get("output_data"):
+                        output = repaired_step["output_data"]
+                        confidence = float(output.get("confidence", quality_confidence))
 
             await agent.complete_run(output, confidence=confidence)
             self._total_cost += agent._total_cost
@@ -453,7 +459,8 @@ class TaskOrchestrator:
         """Attempt to repair a failed step using RepairAgent."""
         db = get_db()
         sid = step["_id"]
-        retries = step.get("retries", 0)
+        current_step = await db.task_steps.find_one({"_id": sid}, {"retries": 1})
+        retries = int((current_step or {}).get("retries", step.get("retries", 0)))
 
         if retries >= settings.MAX_RETRIES_PER_STEP:
             return False
