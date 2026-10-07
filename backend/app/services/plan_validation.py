@@ -29,6 +29,7 @@ def validate_plan_steps(steps: list[dict[str, Any]], max_steps: int) -> list[dic
         step_type = step.get("type")
         if step_type not in ALLOWED_EXECUTABLE_STEP_TYPES:
             raise PlanValidationError(f"Unsupported planner step type: {step_type}")
+        step["id"] = step_id
         ids.append(step_id)
 
     id_set = set(ids)
@@ -45,6 +46,7 @@ def validate_plan_steps(steps: list[dict[str, Any]], max_steps: int) -> list[dic
             )
         if len(deps) != len(set(deps)):
             raise PlanValidationError(f"Step {step_id} contains duplicate dependencies")
+        step["depends_on"] = deps
         graph[step_id] = deps
 
     # DFS cycle detection. A dependency edge A -> B means A depends on B.
