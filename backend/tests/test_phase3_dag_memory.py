@@ -49,6 +49,16 @@ def test_invalid_dags_are_rejected(steps, message):
         validate_plan_steps(steps, max_steps=10)
 
 
+def test_dag_validation_normalizes_ids_and_dependencies():
+    steps = [
+        {"id": " research_a ", "type": "research", "depends_on": []},
+        {"id": "data_b", "type": "data", "depends_on": [" research_a "]},
+    ]
+    validate_plan_steps(steps, max_steps=10)
+    assert steps[0]["id"] == "research_a"
+    assert steps[1]["depends_on"] == ["research_a"]
+
+
 def test_planner_schema_rejects_critic_steps():
     with pytest.raises(ValidationError):
         StepDefinition(
@@ -139,3 +149,42 @@ async def test_memory_search_returns_previous_report_evidence(monkeypatch):
     assert results[0]["sources"][0]["task_id"] == "task-1"
     assert results[0]["sources"][0]["report_summary"] == "Validated thermal findings"
     assert "thermal runaway" in results[0]["sources"][0]["report_excerpt"]
+
+
+class _TerminalTasks:
+    def __init__(self):
+        self.updated = None
+
+    async def find_one(self, query, projection=None):
+        return {
+            "_id": "task-terminal",
+            "user_id": "user-1",
+            "status": "completed",
+            "error": None,
+        }
+
+    async def update_one(self, query, update):
+        self.updated = update
+        return SimpleNamespace(modified_count=1)
+
+
+class _TerminalDb:
+    def __init__(self):
+        self.tasks = _TerminalTasks()
+
+
+@pytest.mark.asyncio
+async def test_recovered_terminal_task_is_idempotent_noop(monkeypatch):
+    import app.agents.orchestrator as orchestrator_module
+
+    db = _TerminalDb()
+    monkeypatch.setattr(orchestrator_module, "get_db", lambda: db)
+
+    orchestrator = orchestrator_module.TaskOrchestrator(
+        task_id="task-terminal",
+        user_id="user-1",
+    )
+    result = await orchestrator.execute()
+
+    assert result["status"] == "completed"
+    assert db.tasks.updated["$set"]["budget.reserved_usd"] == 0.0
