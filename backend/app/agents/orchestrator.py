@@ -93,8 +93,92 @@ class TaskOrchestrator:
         task_doc = await db.tasks.find_one({"_id": self.task_id, "user_id": self.user_id})
         if not task_doc:
             raise ValueError(f"Task {self.task_id} not found")
-        if task_doc.get("status") == TaskStatus.CANCELLED.value:
-            return {"status": "cancelled", "task_id": self.task_id}
+
+        current_status = task_doc.get("status")
+        terminal_statuses = {
+            TaskStatus.COMPLETED.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.CANCELLED.value,
+        }
+        if current_status in terminal_statuses:
+            # A worker may crash after finishing a task but before removing the
+            # Redis processing-list payload. Recovered terminal tasks are no-ops.
+            await db.tasks.update_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"$set": {"budget.reserved_usd": 0.0}},
+            )
+            return {
+                "status": current_status,
+                "task_id": self.task_id,
+                "error": task_doc.get("error"),
+            }
+
+        if current_status in (TaskStatus.PLANNING.value, TaskStatus.RUNNING.value):
+            # Crash recovery. If a report was already persisted, preserve it and
+            # finish the idempotent memory post-processing instead of generating
+            # duplicate steps/report. Otherwise restart planning from a clean
+            # persisted step graph while retaining actual spend.
+            report_id = task_doc.get("report_id")
+            report_doc = None
+            if report_id:
+                report_doc = await db.reports.find_one(
+                    {"_id": report_id, "task_id": self.task_id, "user_id": self.user_id}
+                )
+            if report_doc:
+                await db.tasks.update_one(
+                    {"_id": self.task_id, "user_id": self.user_id},
+                    {"$set": {"budget.reserved_usd": 0.0}},
+                )
+                await self._run_memory_for_report(report_id, report_doc)
+                now = datetime.now(timezone.utc)
+                await db.tasks.update_one(
+                    {"_id": self.task_id, "user_id": self.user_id},
+                    {"$set": {
+                        "status": TaskStatus.COMPLETED.value,
+                        "completed_at": now,
+                        "updated_at": now,
+                        "error": None,
+                    }},
+                )
+                await self._emit_event("task_status", {
+                    "status": "completed",
+                    "recovered": True,
+                })
+                return {"status": "completed", "task_id": self.task_id, "recovered": True}
+
+            now = datetime.now(timezone.utc)
+            await db.agent_runs.update_many(
+                {
+                    "task_id": self.task_id,
+                    "status": AgentRunStatus.RUNNING.value,
+                },
+                {"$set": {
+                    "status": AgentRunStatus.ABORTED.value,
+                    "error": "Worker recovery restarted interrupted task",
+                    "completed_at": now,
+                }},
+            )
+            await db.task_steps.delete_many({"task_id": self.task_id})
+            await db.tasks.update_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"$set": {
+                    "status": TaskStatus.PENDING.value,
+                    "plan": None,
+                    "error": None,
+                    "budget.reserved_usd": 0.0,
+                    "updated_at": now,
+                }},
+            )
+            task_doc["status"] = TaskStatus.PENDING.value
+            task_doc["plan"] = None
+        else:
+            # No LLM call can still be alive when a queued pending task starts.
+            # Clear any stale reservation left by an interrupted previous process.
+            await db.tasks.update_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"$set": {"budget.reserved_usd": 0.0}},
+            )
+
         try:
             await self._check_cancellation()
         except TaskCancelledException:
@@ -582,36 +666,58 @@ class TaskOrchestrator:
             )
             await self._emit_event("report_generated", {"report_id": report_id})
 
-            # Trigger MemoryAgent to extract and store knowledge graph nodes
-            try:
-                from app.agents.memory import MemoryAgent
-                memory_agent = MemoryAgent(
-                    task_id=self.task_id,
-                    step_id="memory",
-                    user_id=self.user_id,
-                    budget_usd=0.05,
-                )
-                memory_input = {
-                    "report_content": report.get("content", ""),
-                    "report_summary": report.get("summary", ""),
-                    "task_id": self.task_id,
-                    "report_id": report_id,
-                }
-                await memory_agent.start_run(memory_input)
-                memory_result = await memory_agent.run(memory_input)
-                await memory_agent.complete_run(memory_result)
-                self._total_cost += memory_agent._total_cost
-                logger.info("MemoryAgent completed: %s", memory_result)
-            except Exception as e:
-                import traceback
-                logger.error("MemoryAgent failed (non-critical) with exception: %s\n%s", e, traceback.format_exc())
-
+            await self._run_memory_for_report(report_id, report_doc)
             return True
 
         except Exception as e:
             await report_agent.complete_run({}, status=AgentRunStatus.FAILED, error=str(e))
             logger.error("Report generation failed for task %s: %s", self.task_id, e)
             return False
+
+    async def _run_memory_for_report(
+        self,
+        report_id: str,
+        report: dict[str, Any],
+    ) -> None:
+        """Run idempotent non-critical memory extraction for a persisted report."""
+        db = get_db()
+        existing = await db.agent_runs.find_one(
+            {
+                "task_id": self.task_id,
+                "step_id": "memory",
+                "status": AgentRunStatus.COMPLETED.value,
+            },
+            {"_id": 1},
+        )
+        if existing:
+            return
+
+        try:
+            from app.agents.memory import MemoryAgent
+
+            memory_agent = MemoryAgent(
+                task_id=self.task_id,
+                step_id="memory",
+                user_id=self.user_id,
+                budget_usd=0.05,
+            )
+            memory_input = {
+                "report_content": report.get("content", ""),
+                "report_summary": report.get("summary", ""),
+                "task_id": self.task_id,
+                "report_id": report_id,
+            }
+            await memory_agent.start_run(memory_input)
+            memory_result = await memory_agent.run(memory_input)
+            await memory_agent.complete_run(memory_result)
+            self._total_cost += memory_agent._total_cost
+            logger.info("MemoryAgent completed: %s", memory_result)
+        except Exception as exc:
+            logger.exception(
+                "MemoryAgent failed (non-critical) for task %s: %s",
+                self.task_id,
+                exc,
+            )
 
     async def _check_cancellation(self) -> None:
         """Check Redis for cancellation flag. Raises TaskCancelledException if set."""
