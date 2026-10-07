@@ -19,6 +19,7 @@ class AgentType(str, Enum):
     CRITIC = "critic"
     REPORT = "report"
     REPAIR = "repair"
+    MEMORY = "memory"
 
 
 class AgentRunStatus(str, Enum):
