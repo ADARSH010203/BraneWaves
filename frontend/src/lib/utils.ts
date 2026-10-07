@@ -49,6 +49,7 @@ export function getAgentBadgeClass(agentType: string): string {
         critic: "agent-critic",
         report: "agent-report",
         repair: "agent-repair",
+        memory: "agent-memory",
     };
     return map[agentType] || "agent-research";
 }
