@@ -12,6 +12,7 @@ interface GraphNode {
   description: string;
   task_count: number;
   occurrence_count: number;
+  task_ids: string[];
   x?: number;
   y?: number;
   vx?: number;
@@ -25,6 +26,10 @@ interface GraphEdge {
   from: string;
   to: string;
   weight: number;
+  relation: string;
+  description: string;
+  task_count: number;
+  semantic: boolean;
   source?: GraphNode;
   target?: GraphNode;
 }
@@ -44,6 +49,7 @@ export default function BrainPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
+  const [totalTasks, setTotalTasks] = useState(0);
   const svgRef = useRef<SVGSVGElement>(null);
   const simulationRef = useRef<any>(null);
 
@@ -52,6 +58,7 @@ export default function BrainPage() {
       const data = await api.getMemoryGraph();
       setNodes(data.nodes);
       setEdges(data.edges);
+      setTotalTasks(data.total_tasks);
     } catch (err) {
       console.error("Failed to fetch memory graph:", err);
     } finally {
@@ -125,8 +132,20 @@ export default function BrainPage() {
         .selectAll("line")
         .data(simEdges)
         .join("line")
-        .attr("stroke", "rgba(148, 163, 184, 0.15)")
-        .attr("stroke-width", (d: any) => Math.max(1, d.weight));
+        .attr("stroke", (d: any) => d.semantic ? "rgba(129, 140, 248, 0.35)" : "rgba(148, 163, 184, 0.12)")
+        .attr("stroke-width", (d: any) => Math.max(1, d.weight * 2))
+        .attr("stroke-dasharray", (d: any) => d.semantic ? null : "4 4");
+
+      const linkLabel = g
+        .append("g")
+        .selectAll("text")
+        .data(simEdges.filter((e: any) => e.semantic))
+        .join("text")
+        .text((d: any) => String(d.relation || "related_to").replaceAll("_", " "))
+        .attr("fill", "#818cf8")
+        .attr("font-size", "8px")
+        .attr("text-anchor", "middle")
+        .attr("opacity", 0.8);
 
       // Node groups
       const node = g
@@ -194,6 +213,9 @@ export default function BrainPage() {
           .attr("y2", (d: any) => d.target.y);
 
         node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
+        linkLabel
+          .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
+          .attr("y", (d: any) => (d.source.y + d.target.y) / 2 - 4);
       });
     };
 
@@ -250,8 +272,6 @@ export default function BrainPage() {
     }
   };
 
-  const totalTasks = new Set(nodes.flatMap((n) => Array.isArray(n.task_count) ? [] : [n.task_count])).size;
-
   if (loading) {
     return (
       <div className="animate-fade-in flex items-center justify-center min-h-[60vh]">
@@ -280,7 +300,7 @@ export default function BrainPage() {
         {[
           { label: "Memory Nodes", value: nodes.length, icon: Brain, color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/20" },
           { label: "Connections", value: edges.length, icon: GitBranch, color: "text-sky-400", bg: "bg-sky-500/10", border: "border-sky-500/20" },
-          { label: "Tasks Analyzed", value: new Set(nodes.flatMap((n) => [] as string[])).size || nodes.length, icon: Zap, color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+          { label: "Tasks Analyzed", value: totalTasks, icon: Zap, color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
         ].map((s) => (
           <div key={s.label} className={`glass-card p-5 border ${s.border}`}>
             <div className="flex items-center gap-3">
