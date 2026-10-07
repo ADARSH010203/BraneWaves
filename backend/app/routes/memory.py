@@ -26,11 +26,10 @@ async def get_memory_graph(current_user: dict = Depends(get_current_user)):
         {"user_id": user_id}
     ).sort("weight", -1).to_list(length=1000)
 
-    all_task_ids = {
-        str(task_id)
-        for node in nodes
-        for task_id in node.get("task_ids", [])
-    }
+    all_task_ids = await db.memory_nodes.distinct(
+        "task_ids",
+        {"user_id": user_id},
+    )
 
     return {
         "nodes": [
@@ -60,7 +59,7 @@ async def get_memory_graph(current_user: dict = Depends(get_current_user)):
         ],
         "total_nodes": len(nodes),
         "total_edges": len(edges),
-        "total_tasks": len(all_task_ids),
+        "total_tasks": len({str(task_id) for task_id in all_task_ids}),
     }
 
 
