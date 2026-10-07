@@ -27,7 +27,7 @@ export interface AuthResponse {
 export type TaskStatus = "pending" | "planning" | "running" | "paused" | "completed" | "failed" | "cancelled";
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped" | "retrying";
 export type StepType = "research" | "data" | "code" | "critique" | "report" | "repair";
-export type AgentType = "planner" | "research" | "data" | "code" | "critic" | "report" | "repair";
+export type AgentType = "planner" | "research" | "data" | "code" | "critic" | "report" | "repair" | "memory";
 
 export interface TaskBudget {
     max_usd: number;
