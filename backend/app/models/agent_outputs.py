@@ -112,6 +112,26 @@ class RepairOutput(BaseModel):
     corrected_output: Dict[str, Any] = Field(default_factory=dict, description="The full corrected output")
     confidence: float = Field(default=0.8, ge=0.0, le=1.0, description="Confidence in the repair")
 
+class MemoryNodeDefinition(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    type: Literal["topic", "entity", "technology", "concept"] = "topic"
+    description: str = Field(default="", max_length=500)
+
+
+class MemoryEdgeDefinition(BaseModel):
+    source: str = Field(min_length=1, max_length=80)
+    target: str = Field(min_length=1, max_length=80)
+    relation: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+    strength: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class MemoryOutput(BaseModel):
+    nodes: List[MemoryNodeDefinition] = Field(default_factory=list, max_length=15)
+    edges: List[MemoryEdgeDefinition] = Field(default_factory=list, max_length=40)
+    summary: str = Field(default="", max_length=1000)
+
+
 class ReportSection(BaseModel):
     title: str = Field(default="Section", description="Section title")
     content: str = Field(default="", description="Section content")
