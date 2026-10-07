@@ -89,7 +89,13 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_DATASET_SEARCH: int = 30
     TOOL_TIMEOUT_PYTHON_SANDBOX: int = 60
     TOOL_TIMEOUT_VECTOR_SEARCH: int = 15
-    TOOL_TIMEOUT_CITATION_VERIFY: int = 20\n\n    # ── Isolated code execution ─────────────────────────────────────────\n    # Point this at a separately isolated sandbox service. Local host subprocess\n    # execution is intentionally disabled because it is not a security boundary.\n    PYTHON_SANDBOX_URL: str | None = None\n    PYTHON_SANDBOX_API_KEY: str | None = None
+    TOOL_TIMEOUT_CITATION_VERIFY: int = 20
+
+    # ── Isolated code execution ─────────────────────────────────────────
+    # Point this at a separately isolated sandbox service. Local host subprocess
+    # execution is intentionally disabled because it is not a security boundary.
+    PYTHON_SANDBOX_URL: str | None = None
+    PYTHON_SANDBOX_API_KEY: str | None = None
 
     # ── OAuth ────────────────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str | None = None
