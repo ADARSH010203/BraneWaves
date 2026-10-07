@@ -6,15 +6,24 @@ from __future__ import annotations
 
 import uuid
 import logging
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from app.config import get_settings
 
 from app.models.user import UserCreate, UserLogin, UserResponse, TokenResponse
 from app.security.jwt_handler import create_access_token, create_refresh_token, decode_refresh_token
 from app.security.password import hash_password, verify_password
 
 logger = logging.getLogger("arc.services.auth")
+settings = get_settings()
+
+
+def _refresh_token_hash(token: str) -> str:
+    """Store only a one-way digest of refresh tokens."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 async def register_user(db: AsyncIOMotorDatabase, data: UserCreate) -> tuple[UserResponse, TokenResponse]:
@@ -51,9 +60,9 @@ async def register_user(db: AsyncIOMotorDatabase, data: UserCreate) -> tuple[Use
     session_doc = {
         "_id": str(uuid.uuid4()),
         "user_id": user_id,
-        "refresh_token": refresh_token,
+        "refresh_token_hash": _refresh_token_hash(refresh_token),
         "created_at": now,
-        "expires_at": now + timedelta(days=7),
+        "expires_at": now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
     }
     await db.sessions.insert_one(session_doc)
 
@@ -101,9 +110,9 @@ async def login_user(db: AsyncIOMotorDatabase, data: UserLogin) -> tuple[UserRes
     session_doc = {
         "_id": str(uuid.uuid4()),
         "user_id": user_id,
-        "refresh_token": refresh_token,
+        "refresh_token_hash": _refresh_token_hash(refresh_token),
         "created_at": now,
-        "expires_at": now + timedelta(days=7),
+        "expires_at": now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
     }
     await db.sessions.insert_one(session_doc)
 
@@ -149,6 +158,8 @@ async def oauth_login_user(db: AsyncIOMotorDatabase, email: str, name: str, prov
         user = user_doc
     else:
         user_id = user["_id"]
+        if not user.get("is_active", True):
+            raise ValueError("Account is deactivated")
 
     access_token = create_access_token(user_id, user.get("role", "user"))
     refresh_token = create_refresh_token(user_id)
@@ -156,9 +167,9 @@ async def oauth_login_user(db: AsyncIOMotorDatabase, email: str, name: str, prov
     session_doc = {
         "_id": str(uuid.uuid4()),
         "user_id": user_id,
-        "refresh_token": refresh_token,
+        "refresh_token_hash": _refresh_token_hash(refresh_token),
         "created_at": now,
-        "expires_at": now + timedelta(days=7),
+        "expires_at": now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
     }
     await db.sessions.insert_one(session_doc)
 
@@ -189,7 +200,10 @@ async def refresh_tokens(db: AsyncIOMotorDatabase, refresh_token_str: str) -> To
     user_id = payload["sub"]
 
     # Verify session exists
-    session = await db.sessions.find_one({"refresh_token": refresh_token_str, "user_id": user_id})
+    session = await db.sessions.find_one({
+        "refresh_token_hash": _refresh_token_hash(refresh_token_str),
+        "user_id": user_id,
+    })
     if not session:
         raise ValueError("Session not found")
 
@@ -200,6 +214,8 @@ async def refresh_tokens(db: AsyncIOMotorDatabase, refresh_token_str: str) -> To
     user = await db.users.find_one({"_id": user_id})
     if not user:
         raise ValueError("User not found")
+    if not user.get("is_active", True):
+        raise ValueError("Account is deactivated")
 
     # Create new tokens
     now = datetime.now(timezone.utc)
@@ -209,9 +225,9 @@ async def refresh_tokens(db: AsyncIOMotorDatabase, refresh_token_str: str) -> To
     session_doc = {
         "_id": str(uuid.uuid4()),
         "user_id": user_id,
-        "refresh_token": new_refresh,
+        "refresh_token_hash": _refresh_token_hash(new_refresh),
         "created_at": now,
-        "expires_at": now + timedelta(days=7),
+        "expires_at": now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
     }
     await db.sessions.insert_one(session_doc)
 
@@ -220,5 +236,7 @@ async def refresh_tokens(db: AsyncIOMotorDatabase, refresh_token_str: str) -> To
 
 async def logout_user(db: AsyncIOMotorDatabase, refresh_token_str: str) -> bool:
     """Invalidate session by deleting refresh token from database."""
-    res = await db.sessions.delete_one({"refresh_token": refresh_token_str})
+    res = await db.sessions.delete_one({
+        "refresh_token_hash": _refresh_token_hash(refresh_token_str)
+    })
     return res.deleted_count > 0

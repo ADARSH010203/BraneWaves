@@ -27,8 +27,19 @@ def is_safe_url(url: str) -> bool:
         # Block cloud metadata hosts explicitly
         if hostname in ("169.254.169.254", "metadata.google.internal", "localhost", "127.0.0.1"):
             return False
-        ip = ipaddress.ip_address(socket.gethostbyname(hostname))
-        return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast)
+        # Validate every currently resolved address, not only the first A record.
+        # Redirects are disabled below, so each verified request has one checked host.
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        }
+        if not addresses:
+            return False
+        for address in addresses:
+            ip = ipaddress.ip_address(address)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
     except Exception:
         return False
 

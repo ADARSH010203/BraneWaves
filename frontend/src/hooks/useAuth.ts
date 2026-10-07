@@ -18,7 +18,7 @@ export function useAuth() {
 
     const login = useCallback(async (email: string, password: string) => {
         const data = await api.login(email, password);
-        setTokens(data.tokens.access_token, data.tokens.refresh_token);
+        setTokens(data.tokens.access_token);
         setUser(data.user);
         setCurrentUser(data.user);
         router.push("/dashboard");
@@ -26,13 +26,14 @@ export function useAuth() {
 
     const register = useCallback(async (email: string, password: string, name: string) => {
         const data = await api.register(email, password, name);
-        setTokens(data.tokens.access_token, data.tokens.refresh_token);
+        setTokens(data.tokens.access_token);
         setUser(data.user);
         setCurrentUser(data.user);
         router.push("/dashboard");
     }, [router]);
 
-    const logout = useCallback(() => {
+    const logout = useCallback(async () => {
+        await api.logout();
         clearTokens();
         setCurrentUser(null);
         router.push("/");

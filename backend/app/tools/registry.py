@@ -72,8 +72,10 @@ class ToolRegistry:
         tool_name: str,
         params: dict[str, Any],
         user_id: str,
+        allowed_tools: set[str] | None = None,
+        granted_scopes: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Execute a tool by name with permission and allowlist checks."""
+        """Execute a tool with global, per-agent, and permission-scope checks."""
         # Allowlist check
         if tool_name not in self._allowlist:
             raise PermissionError(f"Tool '{tool_name}' is not in the allowlist")
@@ -81,6 +83,15 @@ class ToolRegistry:
         tool = self._tools.get(tool_name)
         if not tool:
             raise ValueError(f"Tool '{tool_name}' not found in registry")
+
+        if allowed_tools is not None and tool_name not in allowed_tools:
+            raise PermissionError(f"Tool '{tool_name}' is not allowed for this agent")
+
+        scopes = granted_scopes or {"basic"}
+        if tool.permission_scope not in scopes:
+            raise PermissionError(
+                f"Tool '{tool_name}' requires '{tool.permission_scope}' permission"
+            )
 
         logger.info("Executing tool: %s for user: %s", tool_name, user_id)
         return await tool.run(params, user_id)

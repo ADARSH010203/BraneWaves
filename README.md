@@ -5,7 +5,7 @@
     <strong>Agentic Research & Work Copilot</strong>
   </p>
   <p align="center">
-    An industry-grade, multi-agent AI research platform powered by Groq (LLaMA 3.3 70B), FastAPI, and Next.js 15. Formulate complex queries and let an autonomous pipeline of 7 specialized agents plan, research, code, analyze, and report on your behalf.
+    A multi-agent AI research platform powered by Groq GPT-OSS models, FastAPI, and Next.js 15. Formulate complex queries and let a pipeline of specialized agents plan, research, analyze, code, critique, repair, and report.
   </p>
   <p align="center">
     <img src="https://img.shields.io/badge/Python-3.11-blue.svg?logo=python&logoColor=white" alt="Python" />
@@ -21,11 +21,10 @@
 
 ## 🚀 Features
 
-- **7-Agent Pipeline Pipeline:** Planner, Research, Data, Code, Critic, Repair, and Report agents orchestrated via a DAG (Directed Acyclic Graph) executor.
+- **7-Agent Pipeline:** Planner, Research, Data, Code, Critic, Repair, and Report agents orchestrated via a DAG (Directed Acyclic Graph) executor.
 - **Real-Time Telemetry:** Live WebSocket streaming directly to the frontend, visualised through a beautiful physics-based Framer Motion timeline.
-- **Persistent Knowledge Base (RAG):** Upload global context documents (PDF, Markdown, CSV, TXT). Powered by `sentence-transformers` and FAISS for sub-millisecond vector similarity search.
-- **Cost Analytics Dashboard:** Aggregate lifetime task costs, caching analytics, and agent budget utilizations.
-- **Intelligent LLM Caching:** SHA-256 hashed queries paired with Redis caching to slash redundant Groq API costs by up to 80%.
+- **Persistent Knowledge Base (RAG):** Upload PDF, Markdown, CSV, TXT, JSON, and DOCX context documents. Embeddings are stored in MongoDB and searched with an in-process FAISS index. Large deployments should use a persistent vector service.
+- **Cost Analytics Dashboard:** Aggregate lifetime task costs, token usage, per-agent spend, daily trends, and recent task costs.
 - **Robust Authentication:** Traditional Email/Password + OAuth2 (Google & GitHub) backed by secure JWT sessions.
 - **Export & Delivery:** Automatically generate polished outputs downloadable as rich Markdown, PDF, or DOCX formats.
 
@@ -33,13 +32,13 @@
 
 ## 🏗 System Architecture
 
-The BrainWeave ARC platform is split into two tightly coupled repositories:
+The BrainWeave ARC platform is organized into two main application directories:
 
 1. **/backend** (FastAPI / Python)
    - Serves the robust REST API and WebSocket events.
    - Manages connections to MongoDB (via Motor) and Redis.
    - Executes the core DAG agent orchestrator.
-   - Enforces rate limiting, token validation via `authlib`, and sandboxed code-execution execution timeouts.
+   - Enforces rate limiting, JWT validation, tool permissions, and forwards code execution only to a separately isolated sandbox service.
 
 2. **/frontend** (Next.js 15 / React / TailwindCSS)
    - Delivers a premium, dark-mode biased, glassmorphic UI.
@@ -85,7 +84,7 @@ pip install -r requirements.txt
 ```
 
 ### Environment Variables (.env)
-Create a `.env` file in the `backend/` directory with the following variables:
+Copy the repository-root `.env.example` to `.env` and fill in the required values:
 
 ```ini
 # Application
@@ -98,7 +97,7 @@ MONGO_URI="mongodb://localhost:27017"
 REDIS_URL="redis://localhost:6379/0"
 
 # Authentication
-# IMPORTANT: Change this to a secure random string for production
+# Required in every environment; generate a random secret of at least 32 characters
 JWT_SECRET_KEY="your-secure-32-byte-secret-key-here" 
 
 # AI APIs
@@ -146,21 +145,22 @@ The Next.js frontend will now be running at `http://localhost:3000`.
 
 ---
 
-## 🐋 Run with Docker (Recommended)
+## 🐋 Run with Docker
 
-If you perfectly want to emulate the production environment or skip manual Python/Node installations, you can use the newly included Docker configuration.
+`docker-compose.yml` is the **development stack**. It includes the API, worker, frontend, MongoDB, and Redis. MongoDB and Redis are not published to host ports.
 
-Make sure [Docker Desktop](https://www.docker.com/products/docker-desktop/) is installed and running. Create your `backend/.env` file as described in Step 1, then simply run:
+Make sure [Docker Desktop](https://www.docker.com/products/docker-desktop/) is installed and running. Create your root `.env` file as described in Step 1, then simply run:
 
 ```bash
-# Build and boot the entire stack (Frontend, Backend, MongoDB, Redis)
-docker-compose up --build -d
+# Development stack
+docker compose up --build -d
+
+# Production-oriented stack (set NEXT_PUBLIC_API_URL / NEXT_PUBLIC_WS_URL first)
+docker compose -f docker-compose.prod.yml up --build -d
 ```
 
 - Frontend accessible at: `http://localhost:3000`
 - Backend accessible at: `http://localhost:8000`
-- MongoDB accessible at: `localhost:27017`
-- Redis accessible at: `localhost:6379`
 
 To stop the cluster:
 ```bash
@@ -180,9 +180,11 @@ docker-compose down
 ---
 
 ## 🛡 Security & Safety Guardrails
-- **Prompt Injection Defense:** Inputs are parsed and strictly sandboxed to prevent malicious injection workflows.
-- **Budget Enforcements:** Global USD limitations automatically halt LLM API executions if recursive generation limits are struck.
-- **Python Sandbox execution:** Any `code` agent python executions are rigorously capped by isolation timeouts.
+- **Prompt Injection Telemetry:** Heuristic detection flags suspicious instructions; it is not treated as a security boundary.
+- **Tool Authorization:** Agents can execute only explicitly allowed tools, with permission-scope checks.
+- **Budget Enforcement:** Per-task budgets and account usage quotas are enforced from recorded LLM usage.
+- **Python Isolation:** The API never runs untrusted Python locally. Configure `PYTHON_SANDBOX_URL` to a separately isolated service with CPU, memory, filesystem, network, and process limits.
+- **Refresh Sessions:** Refresh tokens are stored as hashes in MongoDB and sent to browsers only in HttpOnly cookies.
 
 ---
 

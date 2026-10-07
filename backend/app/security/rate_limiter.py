@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import logging
+from collections import defaultdict, deque
 
 from fastapi import HTTPException, Request, status
 
@@ -13,6 +14,21 @@ from app.config import get_settings
 from app.database import get_redis
 
 logger = logging.getLogger("arc.rate_limiter")
+_fallback_windows: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _check_in_memory(key: str, limit: int, window_seconds: int, now: float) -> None:
+    """Per-process fallback limiter used when Redis is unavailable."""
+    bucket = _fallback_windows[key]
+    cutoff = now - window_seconds
+    while bucket and bucket[0] <= cutoff:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Please slow down.",
+        )
+    bucket.append(now)
 
 
 async def check_rate_limit(key: str, max_requests: int | None = None, window_seconds: int = 60) -> None:
@@ -29,6 +45,7 @@ async def check_rate_limit(key: str, max_requests: int | None = None, window_sec
     try:
         redis = get_redis()
         if redis is None:
+            _check_in_memory(key, limit, window_seconds, now)
             return
         pipe = redis.pipeline()
         pipe.zremrangebyscore(rkey, 0, window_start)
@@ -47,8 +64,8 @@ async def check_rate_limit(key: str, max_requests: int | None = None, window_sec
     except HTTPException:
         raise
     except Exception as e:
-        # Fallback gracefully if Redis is down or not initialised
-        logger.warning("Rate limiter Redis unavailable (degraded mode): %s", e)
+        logger.warning("Rate limiter Redis unavailable; using in-memory fallback: %s", e)
+        _check_in_memory(key, limit, window_seconds, now)
 
 
 async def rate_limit_by_ip(request: Request) -> None:

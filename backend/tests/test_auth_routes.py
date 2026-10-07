@@ -26,7 +26,8 @@ async def test_auth_full_lifecycle():
         assert data["user"]["email"] == test_email
         assert "tokens" in data
         assert "access_token" in data["tokens"]
-        assert "refresh_token" in data["tokens"]
+        assert "refresh_token" not in data["tokens"]
+        assert client.cookies.get("arc_refresh_token")
 
         # 2. Duplicate registration fails (409)
         dup_res = await client.post(
@@ -43,7 +44,7 @@ async def test_auth_full_lifecycle():
         assert login_res.status_code == 200
         login_data = login_res.json()
         assert login_data["user"]["email"] == test_email
-        refresh_token = login_data["tokens"]["refresh_token"]
+        assert client.cookies.get("arc_refresh_token")
 
         # 4. Login with wrong password fails (401)
         bad_pw_res = await client.post(
@@ -53,26 +54,18 @@ async def test_auth_full_lifecycle():
         assert bad_pw_res.status_code == 401
 
         # 5. Refresh token
-        refresh_res = await client.post(
-            "/auth/refresh",
-            json={"refresh_token": refresh_token},
-        )
+        refresh_res = await client.post("/auth/refresh")
         assert refresh_res.status_code == 200
         ref_data = refresh_res.json()
         assert "access_token" in ref_data
-        assert "refresh_token" in ref_data
+        assert "refresh_token" not in ref_data
+        assert client.cookies.get("arc_refresh_token")
 
         # 6. Logout user
-        logout_res = await client.post(
-            "/auth/logout",
-            json={"refresh_token": ref_data["refresh_token"]},
-        )
+        logout_res = await client.post("/auth/logout")
         assert logout_res.status_code == 200
         assert logout_res.json()["success"] is True
 
         # 7. Refresh after logout fails (401)
-        post_logout_ref = await client.post(
-            "/auth/refresh",
-            json={"refresh_token": ref_data["refresh_token"]},
-        )
+        post_logout_ref = await client.post("/auth/refresh")
         assert post_logout_ref.status_code == 401

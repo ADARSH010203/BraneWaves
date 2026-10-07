@@ -1,6 +1,6 @@
 # BrainWeave: Project Benefits & Use Cases
 
-This document details the distinct advantages of the BrainWeave platform, highlighting why it is an exceptional technical achievement and detailing its real-world applications.
+This document summarizes the BrainWeave platform's technical strengths and realistic use cases.
 
 ---
 
@@ -10,15 +10,15 @@ This document details the distinct advantages of the BrainWeave platform, highli
 Most AI tools (like standard ChatGPT) require constant back-and-forth prompting. BrainWeave is different. You give it one high-level goal, and it autonomously delegates the work across **7 specialized sub-agents**. It plans, executes, evaluates, repairs its own mistakes, and finally generates a validated report.
 
 ### 2. High-Speed, Independent RAG (Retrieval-Augmented Generation)
-Instead of relying on slow, third-party database searches, the platform uses a highly customized **FAISS (Facebook AI Similarity Search) index** running locally. This makes searching through thousands of document chunks 100x faster than traditional iterative approaches, enabling immediate contextual awareness.
+Instead of relying on slow, third-party database searches, the platform stores local sentence-transformer embeddings and uses an in-process **FAISS** similarity index for retrieval. This is appropriate for project-scale workloads; larger deployments should use a persistent vector service.
 
 ### 3. Highly Secure Architecture
-- **Sandboxed Execution:** AI-generated Python code is executed in a highly controlled namespace.
-- **Prompt Injection Defense:** Analyzes input payloads to stop malicious users from bypassing instructions.
+- **Isolated Execution:** AI-generated Python is never executed inside the API process. It is forwarded only to a separately isolated sandbox service when one is configured.
+- **Prompt Injection Telemetry:** Suspicious instructions are flagged heuristically, while hard security boundaries are enforced through tool authorization and isolated execution.
 - **Cost Guardrails:** Tracks LLM tokens dynamically and hard-stops the process before it drains the budget.
 
 ### 4. Real-time Visibility
-The user is never left waiting in the dark. Utilizing **Redis Pub/Sub and WebSockets**, the frontend application streams the exact internal thought process of the AI network millisecond-by-millisecond.
+The user is never left waiting in the dark. Utilizing **Redis Pub/Sub and WebSockets**, the frontend application streams task, step, agent, and token events in real time.
 
 ### 5. Why it's a Perfect Final Year Project
 This project perfectly demonstrates mastery over complex, modern computer science concepts:
@@ -33,10 +33,10 @@ This project perfectly demonstrates mastery over complex, modern computer scienc
 ## 🌍 Real-World Use Cases (Kaha Use Kar Sakte Hai)
 
 ### 1. Academic & Scientific Research
-A student or researcher can upload 50 dense PDF papers. They can then ask the platform to: *"Analyze these papers and write a literature review on Quantum Error Correction, citing your sources."* The agents will extract text, vector-search the references, synthesize the data, and build a fully cited report.
+A student or researcher can upload up to the configured knowledge-base document limit (20 by default). They can then ask the platform to: *"Analyze these papers and write a literature review on Quantum Error Correction, citing your sources."* The agents will extract text, vector-search the references, synthesize the data, and build a fully cited report.
 
 ### 2. Financial & Market Analysis
-A financial analyst needs to evaluate a competitor. They give the prompt: *"Scrape the latest news on Company X, analyze their Q3 earnings reports, and write a Python script to forecast their Q4 growth."* BrainWeave will search the web, write the data analysis code in its sandbox, execute it, and return the final mathematical analysis.
+A financial analyst needs to evaluate a competitor. They give the prompt: *"Scrape the latest news on Company X, analyze their Q3 earnings reports, and write a Python script to forecast their Q4 growth."* BrainWeave will search the web, write data analysis code and, when an isolated sandbox service is configured, execute it, and return the final mathematical analysis.
 
 ### 3. Automated Software Auditing
 Developers can point the AI at a codebase or documentation and ask it to find security vulnerabilities. The Critic and Code agents will loop over the files, write test scripts to verify the bugs, and generate a final patch report.

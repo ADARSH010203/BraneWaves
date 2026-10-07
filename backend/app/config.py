@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     REDIS_URL: RedisDsn = Field(default="redis://localhost:6379/0")  # type: ignore[assignment]
 
     # ── JWT / Auth ───────────────────────────────────────────────────────
-    JWT_SECRET_KEY: str = "CHANGE-ME-IN-PRODUCTION-32-byte-min"
-    JWT_ALGORITHM: str = "HS256"
+    JWT_SECRET_KEY: str = ""
+    JWT_ALGORITHM: Literal["HS256"] = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
@@ -50,13 +50,11 @@ class Settings(BaseSettings):
     LLM_FALLBACK_ROUTING: list[str] = Field(
         default=[
             "groq/openai/gpt-oss-20b",
-            "groq/qwen/qwen3.6-27b",
-            "groq/qwen/qwen3.8-27b",
             "groq/openai/gpt-oss-120b",
         ]
     )
     FALLBACK_LLM_PROVIDER: str = "groq"
-    FALLBACK_LLM_MODEL: str = "qwen/qwen3.6-27b"
+    FALLBACK_LLM_MODEL: str = "openai/gpt-oss-120b"
     EVAL_LLM_PROVIDER: str = "groq"
     EVAL_LLM_MODEL: str = "openai/gpt-oss-20b"
 
@@ -92,6 +90,12 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_PYTHON_SANDBOX: int = 60
     TOOL_TIMEOUT_VECTOR_SEARCH: int = 15
     TOOL_TIMEOUT_CITATION_VERIFY: int = 20
+
+    # ── Isolated code execution ─────────────────────────────────────────
+    # Point this at a separately isolated sandbox service. Local host subprocess
+    # execution is intentionally disabled because it is not a security boundary.
+    PYTHON_SANDBOX_URL: str | None = None
+    PYTHON_SANDBOX_API_KEY: str | None = None
 
     # ── OAuth ────────────────────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str | None = None

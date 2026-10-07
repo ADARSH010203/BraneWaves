@@ -28,6 +28,7 @@ class ApiClient {
         const res = await fetch(`${this.baseUrl}${path}`, {
             ...options,
             headers,
+            credentials: "include",
         });
 
         if (res.status === 401) {
@@ -42,6 +43,7 @@ class ApiClient {
                 const retryRes = await fetch(`${this.baseUrl}${path}`, {
                     ...options,
                     headers: retryHeaders,
+                    credentials: "include",
                 });
                 if (!retryRes.ok) throw new ApiError(retryRes.status, await retryRes.text());
                 return retryRes.json();
@@ -79,19 +81,15 @@ class ApiClient {
     }
 
     private async refreshToken(): Promise<boolean> {
-        const refreshToken = localStorage.getItem("arc_refresh_token");
-        if (!refreshToken) return false;
-
         try {
             const res = await fetch(`${this.baseUrl}/auth/refresh`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ refresh_token: refreshToken }),
+                credentials: "include",
             });
             if (!res.ok) return false;
             const data = await res.json();
             localStorage.setItem("arc_access_token", data.access_token);
-            localStorage.setItem("arc_refresh_token", data.refresh_token);
+            localStorage.removeItem("arc_refresh_token");
             return true;
         } catch {
             return false;
@@ -114,15 +112,11 @@ class ApiClient {
     }
 
     async logout() {
-        const refreshToken = typeof window !== "undefined" ? localStorage.getItem("arc_refresh_token") : null;
         try {
-            if (refreshToken) {
-                await fetch(`${this.baseUrl}/auth/logout`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ refresh_token: refreshToken }),
-                });
-            }
+            await fetch(`${this.baseUrl}/auth/logout`, {
+                method: "POST",
+                credentials: "include",
+            });
         } catch {
             // Ignore network errors on logout
         } finally {
@@ -175,6 +169,7 @@ class ApiClient {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: formData,
+            credentials: "include",
         });
         if (!res.ok) throw new ApiError(res.status, await res.text());
         return res.json();
@@ -189,6 +184,7 @@ class ApiClient {
             method: "POST",
             headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: formData,
+            credentials: "include",
         });
         if (!res.ok) throw new ApiError(res.status, await res.text());
         return res.json();
@@ -209,6 +205,7 @@ class ApiClient {
             `${this.baseUrl}/tasks/${taskId}/export?format=${format}`,
             {
                 headers: token ? { Authorization: `Bearer ${token}` } : {},
+                credentials: "include",
             }
         );
         if (!res.ok) {

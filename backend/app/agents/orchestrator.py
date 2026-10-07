@@ -112,13 +112,25 @@ class TaskOrchestrator:
                 "description": task_doc["description"],
             })
             await planner.complete_run(plan, confidence=plan.get("confidence", 0.8))
+            self._total_cost += planner._total_cost
         except Exception as e:
             await planner.complete_run({}, status=AgentRunStatus.FAILED, error=str(e))
             await self._fail_task(str(e))
             return {"error": str(e)}
 
         # Save plan and create steps
-        steps = plan.get("steps", [])
+        # Final report generation is owned by Phase 3; ignore legacy planner
+        # report steps to prevent duplicate report execution/cost.
+        steps = [
+            step for step in plan.get("steps", [])
+            if step.get("type") != StepType.REPORT.value
+        ]
+        task_budget = task_doc.get("budget", {})
+        max_steps = int(task_budget.get("max_steps", settings.MAX_STEPS_PER_TASK))
+        if len(steps) > max_steps:
+            error = f"Planner produced {len(steps)} steps, exceeding task limit of {max_steps}"
+            await self._fail_task(error)
+            return {"error": error}
         await db.tasks.update_one(
             {"_id": self.task_id},
             {"$set": {"plan": plan, "status": TaskStatus.RUNNING.value, "updated_at": datetime.now(timezone.utc)}},
@@ -173,6 +185,14 @@ class TaskOrchestrator:
             return {"error": str(e)}
 
         # ── Phase 3: Report Generation ───────────────────────────────────
+        task_budget = (await db.tasks.find_one({"_id": self.task_id})).get("budget", {})
+        max_usd = float(task_budget.get("max_usd", settings.MAX_TASK_BUDGET_USD))
+        if self._total_cost >= max_usd:
+            await self._fail_task(
+                f"Task budget exhausted before report generation: ${self._total_cost:.4f} >= ${max_usd:.2f}"
+            )
+            return {"error": "Task budget exhausted before report generation"}
+
         await self._generate_report()
 
         # ── Complete ─────────────────────────────────────────────────────
@@ -369,10 +389,11 @@ class TaskOrchestrator:
                 }},
             )
 
-            # BUG-06 FIX: Update budget.spent_usd in task document
+            # Cost is incremented per LLM call in BaseAgent._record_cost.
+            # Here we only count the completed logical step.
             await db.tasks.update_one(
                 {"_id": self.task_id},
-                {"$inc": {"budget.spent_usd": agent._total_cost, "budget.steps_used": 1}},
+                {"$inc": {"budget.steps_used": 1}},
             )
             await self._emit_event("step_status", {
                 "step_id": sid,
@@ -486,6 +507,7 @@ class TaskOrchestrator:
             for s in failed_steps
         ]
 
+        report_id = str(uuid.uuid4())
         report_agent = ReportAgent(
             task_id=self.task_id,
             step_id="report",
@@ -494,12 +516,16 @@ class TaskOrchestrator:
         )
         await report_agent.start_run({"step_outputs": outputs, "failed_steps": failed_info})
         try:
-            report = await report_agent.run({"step_outputs": outputs, "task_id": self.task_id, "failed_steps": failed_info})
+            report = await report_agent.run({
+                "step_outputs": outputs,
+                "task_id": self.task_id,
+                "failed_steps": failed_info,
+                "report_id": report_id,
+            })
             await report_agent.complete_run(report, confidence=report.get("confidence", 0.7))
             self._total_cost += report_agent._total_cost
 
-            # Save report
-            report_id = str(uuid.uuid4())
+            # Save report using the same ID already used for citations
             task_doc = await db.tasks.find_one({"_id": self.task_id})
             report_doc = {
                 "_id": report_id,

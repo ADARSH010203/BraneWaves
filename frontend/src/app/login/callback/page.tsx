@@ -12,11 +12,9 @@ export default function AuthCallbackPage() {
         const params = new URLSearchParams(hash);
         
         const accessToken = params.get("access_token");
-        const refreshToken = params.get("refresh_token");
-
-        if (accessToken && refreshToken) {
+        if (accessToken) {
             localStorage.setItem("arc_access_token", accessToken);
-            localStorage.setItem("arc_refresh_token", refreshToken);
+            localStorage.removeItem("arc_refresh_token");
             // Simulate brief loading state to ensure context switches cleanly
             setTimeout(() => {
                 router.push("/dashboard");

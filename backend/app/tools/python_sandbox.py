@@ -1,15 +1,17 @@
-"""
-ARC Platform — Python Sandbox Tool
-Executes Python code in a restricted subprocess with resource limits.
+"""ARC Platform — isolated Python sandbox client.
+
+The API process never executes untrusted Python locally.  Code is forwarded to a
+separately deployed sandbox service (container/microVM) that must enforce CPU,
+memory, network, filesystem and process limits.  The AST checks below are only
+defense in depth; they are not treated as a security boundary.
 """
 from __future__ import annotations
 
 import ast
-import asyncio
 import logging
-import textwrap
 from typing import Any
 
+import httpx
 from pydantic import Field
 
 from app.config import get_settings
@@ -18,7 +20,6 @@ from app.tools.base import BaseTool, ToolInput
 logger = logging.getLogger("arc.tools.sandbox")
 settings = get_settings()
 
-# ── Forbidden modules & identifiers for AST checking ───────────────────────
 FORBIDDEN_MODULES = {
     "os", "sys", "subprocess", "shutil", "socket", "http", "urllib",
     "requests", "signal", "ctypes", "multiprocessing", "pathlib",
@@ -29,7 +30,7 @@ FORBIDDEN_MODULES = {
 FORBIDDEN_BUILTINS = {
     "eval", "exec", "compile", "__import__", "open", "breakpoint",
     "getattr", "setattr", "delattr", "vars", "globals", "locals",
-    "input", "memoryview", "exit", "quit"
+    "input", "memoryview", "exit", "quit",
 }
 
 FORBIDDEN_ATTRIBUTES = {
@@ -39,18 +40,37 @@ FORBIDDEN_ATTRIBUTES = {
 
 
 class PythonSandboxInput(ToolInput):
-    """Input schema for Python sandbox."""
-    code: str = Field(min_length=1, max_length=10000, description="Python code to execute")
-    timeout: int = Field(default=30, ge=1, le=60, description="Execution timeout in seconds")
+    code: str = Field(min_length=1, max_length=10000)
+    timeout: int = Field(default=30, ge=1, le=60)
+
+
+def _validate_code(code: str) -> str | None:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        return f"Syntax error: {exc}"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in FORBIDDEN_MODULES:
+                    return f"Forbidden import: {alias.name}"
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in FORBIDDEN_MODULES:
+                return f"Forbidden import: {node.module}"
+        elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRIBUTES:
+            return f"Forbidden attribute access: {node.attr}"
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in FORBIDDEN_BUILTINS:
+                return f"Forbidden call: {node.func.id}()"
+    return None
 
 
 class PythonSandboxTool(BaseTool):
-    """Executes Python code in a restricted environment."""
-
     name = "python_sandbox"
-    description = "Execute Python code in a sandboxed environment for data analysis"
+    description = "Execute Python in the separately isolated ARC sandbox service"
     input_schema = PythonSandboxInput
-    timeout_seconds = 60
+    timeout_seconds = 65
     cost_estimate_usd = 0.001
     permission_scope = "elevated"
 
@@ -58,114 +78,61 @@ class PythonSandboxTool(BaseTool):
         code = params["code"]
         timeout = params.get("timeout", 30)
 
-        # AST-based security verification
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            return {"success": False, "error": f"Syntax error: {e}", "output": ""}
+        validation_error = _validate_code(code)
+        if validation_error:
+            return {"success": False, "error": validation_error, "output": ""}
 
-        for node in ast.walk(tree):
-            # Check imports
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    mod_root = alias.name.split(".")[0]
-                    if mod_root in FORBIDDEN_MODULES:
-                        return {
-                            "success": False,
-                            "error": f"Forbidden import: {alias.name}",
-                            "output": "",
-                        }
-            if isinstance(node, ast.ImportFrom):
-                if node.module:
-                    mod_root = node.module.split(".")[0]
-                    if mod_root in FORBIDDEN_MODULES:
-                        return {
-                            "success": False,
-                            "error": f"Forbidden import: {node.module}",
-                            "output": "",
-                        }
-            # Check attribute traversal (__class__, __subclasses__, __globals__, etc.)
-            if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRIBUTES:
-                return {
-                    "success": False,
-                    "error": f"Forbidden attribute access: {node.attr}",
-                    "output": "",
-                }
-            # Check dangerous builtins (eval, exec, compile, open, getattr, globals, etc.)
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_BUILTINS:
-                    return {
-                        "success": False,
-                        "error": f"Forbidden call: {node.func.id}()",
-                        "output": "",
-                    }
-
-        # Wrap code to capture output
-        wrapped = textwrap.dedent(f"""
-import json, math, statistics, collections, itertools, functools
-import datetime, re, string, decimal, fractions
-try:
-    import numpy as np
-    import pandas as pd
-except ImportError:
-    pass
-
-_output_lines = []
-_original_print = print
-def print(*args, **kwargs):
-    import io
-    buf = io.StringIO()
-    _original_print(*args, file=buf, **kwargs)
-    _output_lines.append(buf.getvalue())
-
-try:
-{textwrap.indent(code, '    ')}
-except Exception as e:
-    _output_lines.append(f"ERROR: {{type(e).__name__}}: {{e}}")
-
-_original_print("\\n".join(_output_lines))
-""")
-
-        proc = None
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "python", "-c", wrapped,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout,
-            )
-
-            stdout_str = stdout.decode("utf-8", errors="replace")[:10000]
-            stderr_str = stderr.decode("utf-8", errors="replace")[:5000]
-
-            success = proc.returncode == 0 and "ERROR:" not in stdout_str
-
-            return {
-                "success": success,
-                "output": stdout_str,
-                "stderr": stderr_str if stderr_str else None,
-                "return_code": proc.returncode,
-            }
-
-        except asyncio.TimeoutError:
-            # BUG-04 FIX: Kill zombie process on timeout
-            if proc:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except Exception:
-                    pass
+        if not settings.PYTHON_SANDBOX_URL:
             return {
                 "success": False,
-                "error": f"Code execution timed out after {timeout}s",
+                "error": (
+                    "Python sandbox is disabled. Configure PYTHON_SANDBOX_URL to "
+                    "a separately isolated sandbox service; local execution is forbidden."
+                ),
                 "output": "",
             }
-        except Exception as e:
+
+        headers = {"Content-Type": "application/json"}
+        if settings.PYTHON_SANDBOX_API_KEY:
+            headers["Authorization"] = f"Bearer {settings.PYTHON_SANDBOX_API_KEY}"
+
+        payload = {
+            "code": code,
+            "timeout_seconds": timeout,
+            "request_user_id": user_id,
+            "network": "disabled",
+            "filesystem": "ephemeral",
+        }
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout + 5.0),
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(
+                    settings.PYTHON_SANDBOX_URL.rstrip("/") + "/execute",
+                    json=payload,
+                    headers=headers,
+                )
+            response.raise_for_status()
+            data = response.json()
+            return {
+                "success": bool(data.get("success", False)),
+                "output": str(data.get("output", ""))[:10000],
+                "stderr": str(data.get("stderr", ""))[:5000] or None,
+                "return_code": data.get("return_code"),
+                "error": data.get("error"),
+            }
+        except httpx.TimeoutException:
             return {
                 "success": False,
-                "error": str(e),
+                "error": f"Sandbox service timed out after {timeout}s",
+                "output": "",
+            }
+        except Exception as exc:
+            logger.exception("Sandbox service request failed")
+            return {
+                "success": False,
+                "error": f"Sandbox service unavailable: {exc}",
                 "output": "",
             }
