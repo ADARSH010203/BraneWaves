@@ -1,9 +1,12 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 
 class StepDefinition(BaseModel):
     id: str = Field(description="Unique ID for the step")
-    type: str = Field(default="research", description="Type of the step (e.g. research, data, code)")
+    type: Literal["research", "data", "code"] = Field(
+        default="research",
+        description="Executable step type. Critic/report/repair are orchestrator-controlled.",
+    )
     title: str = Field(default="Step", description="Title of the step")
     description: str = Field(default="", description="Detailed description of what the step should do")
     depends_on: List[str] = Field(default_factory=list, description="IDs of steps this step depends on")
