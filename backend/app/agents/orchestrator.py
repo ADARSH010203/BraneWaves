@@ -588,6 +588,7 @@ class TaskOrchestrator:
                     "report_content": report.get("content", ""),
                     "report_summary": report.get("summary", ""),
                     "task_id": self.task_id,
+                    "report_id": report_id,
                 }
                 await memory_agent.start_run(memory_input)
                 memory_result = await memory_agent.run(memory_input)
