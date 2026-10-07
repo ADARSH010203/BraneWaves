@@ -100,10 +100,12 @@ class TaskOrchestrator:
             await self._cancel_task()
             return {"status": "cancelled", "task_id": self.task_id}
 
-        await db.tasks.update_one(
+        planning_update = await db.tasks.update_one(
             {"_id": self.task_id, "user_id": self.user_id, "status": {"$ne": TaskStatus.CANCELLED.value}},
             {"$set": {"status": TaskStatus.PLANNING.value, "updated_at": datetime.now(timezone.utc)}},
         )
+        if planning_update.modified_count != 1:
+            return {"status": "cancelled", "task_id": self.task_id}
         await self._emit_event("task_status", {"status": "planning"})
 
         planner = PlannerAgent(
