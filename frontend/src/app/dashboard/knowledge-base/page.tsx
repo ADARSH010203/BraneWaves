@@ -3,7 +3,6 @@ import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/lib/api";
 import { FileText, UploadCloud, Trash2, Library, AlertCircle, File, Sparkles, Search } from "lucide-react";
-import { formatCost } from "@/lib/utils"; 
 
 const formatSize = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;
@@ -153,14 +152,14 @@ export default function KnowledgeBasePage() {
           dragActive ? "border-brand-500 bg-brand-500/10" : "border-white/10 hover:border-brand-500/30 hover:bg-slate-800/80"
         }`}
       >
-        <input type="file" onChange={handleChange} accept=".pdf,.txt,.md,.mdx,.csv"
+        <input type="file" onChange={handleChange} accept=".pdf,.docx,.txt,.md,.csv,.json"
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
         
         <div className="flex flex-col items-center justify-center pointer-events-none">
           {uploading ? (
             <>
               <div className="h-12 w-12 border-4 border-brand-500/30 border-t-brand-500 rounded-full animate-spin mb-4" />
-              <p className="font-bold text-white text-lg">Encrypting & Vectorizing...</p>
+              <p className="font-bold text-white text-lg">Processing & Vectorizing...</p>
               <p className="text-sm text-slate-500 mt-1">Parsing text chunks to database</p>
             </>
           ) : (
@@ -171,7 +170,7 @@ export default function KnowledgeBasePage() {
               <p className="font-bold text-white text-lg mb-1">
                 Drag & Drop files here or <span className="text-brand-400">Browse</span>
               </p>
-              <p className="text-sm text-slate-500">Supports PDF, TXT, MD, CSV (Max 50MB)</p>
+              <p className="text-sm text-slate-500">Supports PDF, DOCX, TXT, MD, CSV, JSON (Max 50MB)</p>
             </>
           )}
         </div>
@@ -216,7 +215,7 @@ export default function KnowledgeBasePage() {
                       <File className="h-5 w-5 text-indigo-400" />
                     </div>
                     <div className="min-w-0 pr-4">
-                      <p className="font-bold text-sm text-slate-200 truncate">{doc.filename || doc.original_name}</p>
+                      <p className="font-bold text-sm text-slate-200 truncate">{doc.original_name || doc.filename}</p>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
                           doc.is_indexed
