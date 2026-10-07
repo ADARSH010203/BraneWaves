@@ -98,6 +98,7 @@ class TaskOrchestrator:
         if not task_doc:
             raise ValueError(f"Task {self.task_id} not found")
 
+        self._total_cost = float(task_doc.get("budget", {}).get("spent_usd", 0.0))
         current_status = task_doc.get("status")
         terminal_statuses = {
             TaskStatus.COMPLETED.value,
@@ -170,6 +171,7 @@ class TaskOrchestrator:
                     "plan": None,
                     "error": None,
                     "budget.reserved_usd": 0.0,
+                    "budget.steps_used": 0,
                     "updated_at": now,
                 }},
             )
