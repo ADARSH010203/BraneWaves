@@ -1,6 +1,7 @@
 """Atomic task and account budget reservations for concurrent LLM calls."""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -9,6 +10,17 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 class BudgetReservationError(RuntimeError):
     """Raised when a task/account cannot reserve enough budget for an LLM call."""
+
+
+_local_account_locks: dict[str, asyncio.Lock] = {}
+
+
+def _local_account_lock(user_id: str) -> asyncio.Lock:
+    lock = _local_account_locks.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _local_account_locks[user_id] = lock
+    return lock
 
 
 def estimate_llm_reservation(messages: list[dict[str, Any]], max_tokens: int) -> float:
@@ -114,8 +126,17 @@ async def reserve_task_budget(
                     pass
             return
 
+        # Development fallback: serialize reservations inside this process.
+        # Production task execution requires Redis, so cross-process locking is
+        # provided by the distributed lock above.
+        async with _local_account_lock(user_id):
+            await _reserve_with_checks(
+                db, task_id, user_id, amount_usd, blocked_statuses, True
+            )
+        return
+
     await _reserve_with_checks(
-        db, task_id, user_id, amount_usd, blocked_statuses, enforce_account_quota
+        db, task_id, user_id, amount_usd, blocked_statuses, False
     )
 
 
