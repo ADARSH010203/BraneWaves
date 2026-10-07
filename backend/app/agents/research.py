@@ -64,7 +64,9 @@ Provide a comprehensive research summary as JSON matching the ResearchOutput sch
 
         if settings.ENABLE_AGENT_CACHE:
             prompt_text = messages[0]["content"] if messages else description
-            hash_input = f"{prompt_text}_{settings.GROQ_MODEL}"
+            # Cache is user-scoped because research results may contain private
+            # knowledge-base content retrieved through vector_search.
+            hash_input = f"{self.user_id}\x1f{prompt_text}\x1f{settings.GROQ_MODEL}"
             cache_key = f"cache:agent:research:{hashlib.sha256(hash_input.encode()).hexdigest()}"
             
             try:
