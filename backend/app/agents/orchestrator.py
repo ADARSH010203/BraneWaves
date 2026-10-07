@@ -32,7 +32,11 @@ from app.models.agent_outputs import (
     ReportOutput,
     PlannerOutput,
 )
-from app.services.plan_validation import PlanValidationError, validate_plan_steps
+from app.services.plan_validation import (
+    PlanValidationError,
+    ensure_knowledge_grounding_step,
+    validate_plan_steps,
+)
 
 logger = logging.getLogger("arc.orchestrator")
 settings = get_settings()
@@ -219,6 +223,28 @@ class TaskOrchestrator:
         steps = plan.get("steps", [])
         task_budget = task_doc.get("budget", {})
         max_steps = int(task_budget.get("max_steps", settings.MAX_STEPS_PER_TASK))
+
+        knowledge_available = False
+        if task_doc.get("use_knowledge_base", True):
+            knowledge_query: dict[str, Any] = {
+                "user_id": self.user_id,
+                "task_id": "KNOWLEDGE_BASE",
+                "is_indexed": True,
+            }
+            selected_file_ids = task_doc.get("selected_file_ids", [])
+            if selected_file_ids:
+                knowledge_query["_id"] = {"$in": selected_file_ids}
+            knowledge_available = bool(
+                await db.files.find_one(knowledge_query, {"_id": 1})
+            )
+
+        steps, grounding_injected = ensure_knowledge_grounding_step(
+            steps,
+            knowledge_available=knowledge_available,
+        )
+        plan["steps"] = steps
+        plan["knowledge_grounding_injected"] = grounding_injected
+
         try:
             validate_plan_steps(steps, max_steps)
         except PlanValidationError as exc:
