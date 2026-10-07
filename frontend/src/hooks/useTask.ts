@@ -57,10 +57,17 @@ export function useTask() {
         }
     }, []);
 
-    const createTask = useCallback(async (title: string, description: string, budget?: number, tags?: string[]) => {
+    const createTask = useCallback(async (
+        title: string,
+        description: string,
+        budget?: number,
+        tags?: string[],
+        useKnowledgeBase = true,
+        selectedFileIds: string[] = [],
+    ) => {
         setLoading(true);
         try {
-            const data = await api.createTask(title, description, budget, tags);
+            const data = await api.createTask(title, description, budget, tags, useKnowledgeBase, selectedFileIds);
             setCurrentTask(data);
             return data;
         } catch (e: any) {
