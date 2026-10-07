@@ -26,7 +26,7 @@ class PlannerAgent(BaseAgent):
 For each step, specify:
 - id: A short unique identifier for this step (e.g., 'research_1', 'data_1')
 - title: A short descriptive title
-- type: One of "research", "data", "code", "critique"
+- type: One of "research", "data", "code"
 - description: What should be done in this step
 - depends_on: A list of step IDs that must complete before this step
 - input_data: Any specific parameters or queries for this step
@@ -36,8 +36,7 @@ Output valid JSON matching the exact required schema.
 Rules:
 - Keep steps focused and atomic
 - Ensure proper dependency ordering (no cycles)
-- Include a critique step to validate research findings
-- Do not create a report step; the orchestrator generates exactly one final report after the planned steps finish
+- Do NOT create critique, repair, or report steps. The orchestrator automatically critiques every completed executable step, repairs weak/failed outputs when needed, and generates exactly one final report.
 - Usually 3-10 steps for typical research tasks
 - Mark independent steps as having no dependencies so they can run in parallel
 """
