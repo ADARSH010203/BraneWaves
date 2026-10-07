@@ -132,8 +132,20 @@ export default function BrainPage() {
         .selectAll("line")
         .data(simEdges)
         .join("line")
-        .attr("stroke", "rgba(148, 163, 184, 0.15)")
-        .attr("stroke-width", (d: any) => Math.max(1, d.weight));
+        .attr("stroke", (d: any) => d.semantic ? "rgba(129, 140, 248, 0.35)" : "rgba(148, 163, 184, 0.12)")
+        .attr("stroke-width", (d: any) => Math.max(1, d.weight * 2))
+        .attr("stroke-dasharray", (d: any) => d.semantic ? null : "4 4");
+
+      const linkLabel = g
+        .append("g")
+        .selectAll("text")
+        .data(simEdges.filter((e: any) => e.semantic))
+        .join("text")
+        .text((d: any) => String(d.relation || "related_to").replaceAll("_", " "))
+        .attr("fill", "#818cf8")
+        .attr("font-size", "8px")
+        .attr("text-anchor", "middle")
+        .attr("opacity", 0.8);
 
       // Node groups
       const node = g
@@ -201,6 +213,9 @@ export default function BrainPage() {
           .attr("y2", (d: any) => d.target.y);
 
         node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
+        linkLabel
+          .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
+          .attr("y", (d: any) => (d.source.y + d.target.y) / 2 - 4);
       });
     };
 
