@@ -15,16 +15,35 @@ def ensure_knowledge_grounding_step(
     *,
     knowledge_available: bool,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Guarantee one private-document grounding step when KB evidence exists.
+    """Guarantee private-document grounding reaches every root execution branch.
 
-    If the Planner already produced a research step, no change is needed.
-    Otherwise a root research step is injected and all original root steps
-    depend on it so Data/Code branches receive the grounded evidence.
+    If a Planner-created root research step exists, reuse it as the grounding
+    gate and make other root branches depend on it. If research exists only
+    downstream (or not at all), inject a dedicated root research step instead
+    so adding dependencies cannot create a cycle.
     """
-    if not knowledge_available or any(step.get("type") == "research" for step in steps):
+    if not knowledge_available:
         return steps, False
 
-    existing_ids = {str(step.get("id", "")) for step in steps}
+    original_roots = [step for step in steps if not step.get("depends_on")]
+    root_research = next(
+        (step for step in original_roots if step.get("type") == "research"),
+        None,
+    )
+
+    changed = False
+    if root_research is not None:
+        grounding_id = str(root_research.get("id", "")).strip()
+        if not grounding_id:
+            return steps, False
+        for step in original_roots:
+            if step is root_research:
+                continue
+            step["depends_on"] = [grounding_id]
+            changed = True
+        return steps, changed
+
+    existing_ids = {str(step.get("id", "")).strip() for step in steps}
     grounding_id = "kb_grounding"
     suffix = 1
     while grounding_id in existing_ids:
@@ -43,13 +62,10 @@ def ensure_knowledge_grounding_step(
         "input_data": {"query": "Ground the task in the selected private documents."},
     }
 
-    for step in steps:
-        deps = list(step.get("depends_on", []))
-        if not deps:
-            step["depends_on"] = [grounding_id]
+    for step in original_roots:
+        step["depends_on"] = [grounding_id]
 
     return [grounding_step, *steps], True
-
 
 def validate_plan_steps(steps: list[dict[str, Any]], max_steps: int) -> list[dict[str, Any]]:
     """Validate IDs, step types, references and acyclicity before execution."""
