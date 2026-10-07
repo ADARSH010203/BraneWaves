@@ -35,19 +35,71 @@ class _BudgetDb:
 async def test_atomic_budget_reservation_rejects_when_capacity_is_unavailable():
     db = _BudgetDb(modified_count=0)
     with pytest.raises(BudgetReservationError):
-        await reserve_task_budget(db, "task-1", "user-1", 0.05)
+        await reserve_task_budget(
+            db, "task-1", "user-1", 0.05, enforce_account_quota=False
+        )
 
 
 @pytest.mark.asyncio
 async def test_report_chat_can_reserve_completed_task_budget():
     db = _BudgetDb(modified_count=1)
     await reserve_task_budget(
-        db, "task-1", "user-1", 0.01, allow_completed=True
+        db,
+        "task-1",
+        "user-1",
+        0.01,
+        allow_completed=True,
+        enforce_account_quota=False,
     )
     blocked = db.tasks.last_filter["status"]["$nin"]
     assert "completed" not in blocked
     assert "failed" in blocked
     assert "cancelled" in blocked
+
+
+
+
+class _AggCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def to_list(self, length=None):
+        return self.rows
+
+
+class _QuotaTasks(_FakeTasks):
+    def __init__(self, spent: float, reserved: float):
+        super().__init__(modified_count=1)
+        self.spent = spent
+        self.reserved = reserved
+
+    def aggregate(self, _pipeline):
+        return _AggCursor([{"spent": self.spent, "reserved": self.reserved}])
+
+
+class _QuotaUsers:
+    def __init__(self, quota: float):
+        self.quota = quota
+
+    async def find_one(self, *_args, **_kwargs):
+        return {"_id": "user-1", "usage_quota_usd": self.quota}
+
+
+class _QuotaDb:
+    def __init__(self, quota: float, spent: float, reserved: float):
+        self.users = _QuotaUsers(quota)
+        self.tasks = _QuotaTasks(spent, reserved)
+
+
+@pytest.mark.asyncio
+async def test_account_quota_rejects_combined_task_commitment(monkeypatch):
+    import app.database as database_module
+
+    monkeypatch.setattr(database_module, "get_redis", lambda: None)
+    db = _QuotaDb(quota=1.0, spent=0.75, reserved=0.20)
+
+    with pytest.raises(BudgetReservationError, match="Account usage quota"):
+        await reserve_task_budget(db, "task-1", "user-1", 0.10)
 
 
 def test_llm_budget_reservation_is_positive_and_scales_with_output_limit():
