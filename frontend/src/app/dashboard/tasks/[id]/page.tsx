@@ -436,12 +436,30 @@ export default function TaskDetailPage() {
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-200 truncate" title={c.title}>{c.title}</p>
-                      {c.url && <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-400 hover:text-brand-300 truncate block mt-0.5">
-                        {(() => { try { return new URL(c.url).hostname; } catch { return c.url; } })()} ↗
-                      </a>}
+                      {c.citation_type === "file" || c.url?.startsWith("local://file/") ? (
+                        <div className="mt-1 flex flex-wrap gap-1.5 text-[10px]">
+                          <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                            Local document
+                          </span>
+                          {c.page_number && (
+                            <span className="px-2 py-0.5 rounded bg-slate-700/50 text-slate-300">
+                              Page {c.page_number}
+                            </span>
+                          )}
+                          {c.chunk_id && (
+                            <span className="px-2 py-0.5 rounded bg-slate-700/50 text-slate-400 font-mono">
+                              chunk {String(c.chunk_id).slice(0, 8)}
+                            </span>
+                          )}
+                        </div>
+                      ) : c.url ? (
+                        <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-400 hover:text-brand-300 truncate block mt-0.5">
+                          {(() => { try { return new URL(c.url).hostname; } catch { return c.url; } })()} ↗
+                        </a>
+                      ) : null}
                     </div>
                     {c.verified && (
-                      <span title="Verified by Critic">
+                      <span title="Source verified">
                         <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                       </span>
                     )}
