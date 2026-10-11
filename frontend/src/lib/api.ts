@@ -15,6 +15,38 @@ class ApiClient {
         return localStorage.getItem("arc_access_token");
     }
 
+
+    private async authorizedFetch(
+        path: string,
+        options: RequestInit = {},
+    ): Promise<Response> {
+        const buildHeaders = (): HeadersInit => {
+            const token = this.getToken();
+            return {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(options.headers || {}),
+            };
+        };
+
+        let res = await fetch(`${this.baseUrl}${path}`, {
+            ...options,
+            headers: buildHeaders(),
+            credentials: "include",
+        });
+
+        if (res.status === 401) {
+            const refreshed = await this.refreshToken();
+            if (refreshed) {
+                res = await fetch(`${this.baseUrl}${path}`, {
+                    ...options,
+                    headers: buildHeaders(),
+                    credentials: "include",
+                });
+            }
+        }
+        return res;
+    }
+
     private async request<T>(
         path: string,
         options: RequestInit = {}
@@ -202,12 +234,9 @@ class ApiClient {
         formData.append("file", file);
         if (taskId) formData.append("task_id", taskId);
 
-        const token = this.getToken();
-        const res = await fetch(`${this.baseUrl}/files/upload`, {
+        const res = await this.authorizedFetch("/files/upload", {
             method: "POST",
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: formData,
-            credentials: "include",
         });
         if (!res.ok) throw new ApiError(res.status, await res.text());
         return res.json();
@@ -217,12 +246,9 @@ class ApiClient {
     async uploadKBFile(file: File) {
         const formData = new FormData();
         formData.append("file", file);
-        const token = this.getToken();
-        const res = await fetch(`${this.baseUrl}/knowledge-base/upload`, {
+        const res = await this.authorizedFetch("/knowledge-base/upload", {
             method: "POST",
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: formData,
-            credentials: "include",
         });
         if (!res.ok) throw new ApiError(res.status, await res.text());
         return res.json();
@@ -238,13 +264,8 @@ class ApiClient {
 
     // ── Report Export (FEAT-01) ───────────────────────────────────────
     async exportReport(taskId: string, format: "pdf" | "docx"): Promise<void> {
-        const token = this.getToken();
-        const res = await fetch(
-            `${this.baseUrl}/tasks/${taskId}/export?format=${format}`,
-            {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-                credentials: "include",
-            }
+        const res = await this.authorizedFetch(
+            `/tasks/${taskId}/export?format=${format}`,
         );
         if (!res.ok) {
             const body = await res.text();
