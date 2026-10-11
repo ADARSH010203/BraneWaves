@@ -226,7 +226,20 @@ async def chat_with_report(task_id: str, body: ChatRequest, db: DbDep, user: Use
 
     settings = get_settings()
     previous = await get_chat_history(db, user["_id"], task_id, limit=10)
-    relevant_chunks = await retrieve_report_context(db, report, body.message, top_k=5)
+    try:
+        relevant_chunks = await retrieve_report_context(
+            db,
+            report,
+            body.message,
+            top_k=5,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Semantic report retrieval unavailable for task %s; using summary fallback: %s",
+            task_id,
+            exc,
+        )
+        relevant_chunks = []
 
     citations = await db.citations.find(
         {"report_id": report["_id"]},
