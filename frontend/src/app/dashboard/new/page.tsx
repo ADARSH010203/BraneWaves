@@ -31,6 +31,8 @@ export default function NewTaskPage() {
   const [knowledgeMode, setKnowledgeMode] = useState<"all" | "selected" | "none">("all");
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [kbUploading, setKbUploading] = useState(false);
+  const [pythonSandboxConfigured, setPythonSandboxConfigured] = useState(false);
+  const [webSearchProvider, setWebSearchProvider] = useState("duckduckgo");
 
   useEffect(() => {
     async function loadTemplates() {
@@ -55,6 +57,13 @@ export default function NewTaskPage() {
         const configuredMax = Number(caps.max_task_budget_usd || 5);
         setMaxBudget(configuredMax);
         setBudget((current) => Math.min(current, configuredMax));
+        setPythonSandboxConfigured(Boolean(caps.python_sandbox_configured));
+        const providers = caps.web_search_configured_providers || [];
+        setWebSearchProvider(
+          caps.web_search_provider === "auto"
+            ? (providers[0] || "duckduckgo")
+            : (caps.web_search_provider || "duckduckgo")
+        );
       } catch (err) {
         console.error("Failed to load capabilities", err);
       }
@@ -443,7 +452,13 @@ export default function NewTaskPage() {
 
               <div className="rounded-xl bg-brand-500/5 border border-brand-500/20 p-4 text-sm text-brand-300">
                 <p className="font-semibold mb-1">🚀 What happens next?</p>
-                <p className="text-slate-400">The Planner agent will decompose your task into a DAG, then Research, Code, Data, Critic, and Report agents will execute in parallel.</p>
+                <p className="text-slate-400">
+                  The Planner will use Research and Data agents, with Critic/Repair and a final Report.
+                  {pythonSandboxConfigured
+                    ? " Python CodeAgent steps are enabled through the isolated sandbox."
+                    : " Python CodeAgent steps are disabled because no isolated sandbox is configured."}
+                  {" "}Web research currently routes through {webSearchProvider}.
+                </p>
               </div>
 
               <div className="flex justify-between">

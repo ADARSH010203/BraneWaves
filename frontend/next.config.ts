@@ -26,10 +26,6 @@ const contentSecurityPolicy = [
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  webpack: (config) => {
-    config.cache = false;
-    return config;
-  },
   env: {
     NEXT_PUBLIC_API_URL: apiUrl,
     NEXT_PUBLIC_WS_URL: wsUrl,
