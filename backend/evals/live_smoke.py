@@ -1,15 +1,14 @@
-"""Live external-integration smoke checks.
-
-Run only in the manual GitHub Actions workflow with real credentials/network.
-"""
+"""Live external-integration smoke checks."""
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from app.agents.llm_client import chat_completion
 from app.tools.dataset_search import DatasetSearchTool
 from app.tools.paper_search import PaperSearchTool
+from app.tools.python_sandbox import PythonSandboxTool
 from app.tools.web_search import WebSearchTool
 
 
@@ -25,11 +24,22 @@ async def main() -> None:
     checks["groq_llm"] = {"ok": "ARC_LLM_OK" in llm_text, "response": llm_text[:120]}
 
     web = await WebSearchTool().execute(
-        {"query": "OpenAI artificial intelligence", "num_results": 3, "language": "en"},
+        {"query": "OpenAI artificial intelligence research", "num_results": 3, "language": "en"},
         "live-smoke",
     )
+    configured_primary = any(
+        os.getenv(name)
+        for name in ("BRAVE_SEARCH_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY")
+    )
+    provider = web.get("provider")
     checks["web_search"] = {
-        "ok": bool(web.get("success") and web.get("results")),
+        "ok": bool(
+            web.get("success")
+            and web.get("results")
+            and (not configured_primary or provider != "duckduckgo")
+        ),
+        "provider": provider,
+        "fallback_used": web.get("fallback_used"),
         "count": len(web.get("results", [])),
         "error": web.get("error"),
     }
@@ -53,6 +63,22 @@ async def main() -> None:
         "count": len(datasets.get("results", [])),
         "error": datasets.get("error"),
     }
+
+    if os.getenv("PYTHON_SANDBOX_URL"):
+        sandbox = await PythonSandboxTool().execute(
+            {"code": "print(6 * 7)", "timeout": 10},
+            "live-smoke",
+        )
+        checks["python_sandbox"] = {
+            "ok": bool(sandbox.get("success") and "42" in sandbox.get("output", "")),
+            "error": sandbox.get("error"),
+        }
+    else:
+        checks["python_sandbox"] = {
+            "ok": True,
+            "skipped": True,
+            "reason": "PYTHON_SANDBOX_URL not configured; planner capability gating must disable code steps.",
+        }
 
     print(json.dumps(checks, indent=2))
     failed = [name for name, result in checks.items() if not result.get("ok")]
