@@ -7,22 +7,28 @@ import uuid
 import httpx
 import pytest
 
-from app.database import connect_db, connect_redis, get_db, get_redis
+from app.database import (
+    connect_db,
+    connect_redis,
+    disconnect_db,
+    disconnect_redis,
+    get_db,
+    get_redis,
+)
 from app.main import app
 from app.routes.auth import _oauth_exchange_key
 
 
 async def _ensure_connections():
-    try:
-        db = get_db()
-    except AssertionError:
-        await connect_db()
-        db = get_db()
+    # pytest-asyncio uses a fresh loop per test. Module-level Motor/Redis clients
+    # created by an earlier test must not leak into the next event loop.
+    await disconnect_redis()
+    await disconnect_db()
+    await connect_db()
+    await connect_redis()
 
+    db = get_db()
     redis = get_redis()
-    if redis is None:
-        await connect_redis()
-        redis = get_redis()
     assert redis is not None
     return db, redis
 
