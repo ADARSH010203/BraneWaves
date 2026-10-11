@@ -45,15 +45,26 @@ jobs:
           cache-dependency-path: backend/requirements.lock
       - name: Install frozen dependencies
         run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -r backend/requirements.lock
-      - name: Verify live web, paper and dataset providers
+      - name: Verify live research providers
         run: python backend/evals/provider_smoke.py
-      - name: Require live Groq secret
+      - name: Warn when production search secret is missing
+        if: ${{ env.BRAVE_SEARCH_API_KEY == '' && env.TAVILY_API_KEY == '' && env.SERPER_API_KEY == '' }}
+        run: echo "::warning::No Brave/Tavily/Serper secret is configured; production web search has not been live-verified."
+      - name: Require production search secret for manual full verification
+        if: ${{ github.event_name == 'workflow_dispatch' && env.BRAVE_SEARCH_API_KEY == '' && env.TAVILY_API_KEY == '' && env.SERPER_API_KEY == '' }}
         run: |
-          if [ -z "$GROQ_API_KEY" ]; then
-            echo "GROQ_API_KEY repository secret is required for real LLM verification."
-            exit 1
-          fi
+          echo "Configure BRAVE_SEARCH_API_KEY, TAVILY_API_KEY, or SERPER_API_KEY for full web-search verification."
+          exit 1
+      - name: Warn when Groq secret is missing
+        if: ${{ github.event_name != 'workflow_dispatch' && env.GROQ_API_KEY == '' }}
+        run: echo "::warning::GROQ_API_KEY is not configured; real LLM smoke is skipped on this automatic run."
+      - name: Require Groq secret for manual full verification
+        if: ${{ github.event_name == 'workflow_dispatch' && env.GROQ_API_KEY == '' }}
+        run: |
+          echo "GROQ_API_KEY repository secret is required for manual full verification."
+          exit 1
       - name: Verify live LLM and configured optional sandbox
+        if: ${{ env.GROQ_API_KEY != '' }}
         run: python backend/evals/live_smoke.py
       - name: Run live golden evaluations
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_golden_evals }}
