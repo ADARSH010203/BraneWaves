@@ -14,7 +14,7 @@ from app.agents.data import DataAgent
 from app.agents.code import CodeAgent
 from app.agents.base import BaseAgent
 from app.models.agent import AgentType
-from app.database import connect_db, connect_redis
+from app.database import connect_db, connect_redis, disconnect_db, disconnect_redis, get_db
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("eval")
@@ -61,9 +61,59 @@ Agent Output:
         )
         return await self.parse_json_response(result["content"])
 
+async def _prepare_eval_runtime():
+    """Create an isolated eval user/task required by runtime budget guards."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    await db.usage_cost.delete_many({"user_id": "eval_user"})
+    await db.agent_runs.delete_many({"task_id": "eval_run"})
+    await db.agent_logs.delete_many({"task_id": "eval_run"})
+    await db.task_steps.delete_many({"task_id": "eval_run"})
+    await db.tasks.delete_many({"_id": "eval_run"})
+    await db.users.delete_many({"_id": "eval_user"})
+
+    await db.users.insert_one({
+        "_id": "eval_user",
+        "email": "eval@local.invalid",
+        "name": "ARC Eval",
+        "provider": "local",
+        "role": "user",
+        "plan": "enterprise",
+        "usage_quota_usd": 100.0,
+        "created_at": now,
+        "updated_at": now,
+        "is_active": True,
+    })
+    await db.tasks.insert_one({
+        "_id": "eval_run",
+        "user_id": "eval_user",
+        "title": "ARC golden evaluation",
+        "description": "Internal evaluation runtime",
+        "status": "running",
+        "budget": {
+            "max_usd": 100.0,
+            "spent_usd": 0.0,
+            "reserved_usd": 0.0,
+            "max_steps": 100,
+            "steps_used": 0,
+        },
+        "tags": ["eval"],
+        "use_knowledge_base": False,
+        "selected_file_ids": [],
+        "plan": None,
+        "result_summary": None,
+        "report_id": None,
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
+        "completed_at": None,
+    })
+
+
 async def run_evals():
     await connect_db()
     await connect_redis()
+    await _prepare_eval_runtime()
     from app.tools.registry import register_all_tools, tool_registry
     if not tool_registry._tools:
         register_all_tools()
@@ -163,5 +213,13 @@ async def run_evals():
         
     print(f"Results saved to {out_path}\n")
 
+async def main():
+    try:
+        await run_evals()
+    finally:
+        await disconnect_redis()
+        await disconnect_db()
+
+
 if __name__ == "__main__":
-    asyncio.run(run_evals())
+    asyncio.run(main())
