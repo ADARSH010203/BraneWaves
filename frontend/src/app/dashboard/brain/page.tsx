@@ -136,13 +136,13 @@ export default function BrainPage() {
       // Node groups
       const node = g
         .append("g")
-        .selectAll("g")
+        .selectAll<SVGGElement, GraphNode>("g")
         .data(simNodes)
         .join("g")
         .style("cursor", "pointer")
         .call(
           d3
-            .drag()
+            .drag<SVGGElement, GraphNode>()
             .on("start", (event: any, d: any) => {
               if (!event.active) simulation.alphaTarget(0.3).restart();
               d.fx = d.x;
