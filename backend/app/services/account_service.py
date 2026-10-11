@@ -1,12 +1,47 @@
 """Account profile and deletion services."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.database import get_redis
 from app.models.user import UserResponse
+
+
+
+
+
+async def _purge_queued_tasks(task_ids: list[str]) -> None:
+    """Best-effort removal of deleted-account jobs from Redis queues."""
+    if not task_ids:
+        return
+    redis = get_redis()
+    if redis is None:
+        return
+
+    task_id_set = {str(task_id) for task_id in task_ids}
+    for queue_name in ("task_queue", "task_processing"):
+        try:
+            payloads = await redis.lrange(queue_name, 0, -1)
+            for raw in payloads:
+                try:
+                    payload = json.loads(raw)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                task_id = str(payload.get("task_id", ""))
+                if task_id in task_id_set:
+                    await redis.lrem(queue_name, 0, raw)
+        except Exception:
+            pass
+
+    for task_id in task_id_set:
+        try:
+            await redis.delete(f"task:{task_id}:cancel")
+        except Exception:
+            pass
 
 
 def _to_user_response(user: dict) -> UserResponse:
@@ -62,6 +97,7 @@ async def delete_account(db: AsyncIOMotorDatabase, user_id: str) -> None:
     )
 
     task_ids = await db.tasks.distinct("_id", {"user_id": user_id})
+    await _purge_queued_tasks([str(task_id) for task_id in task_ids])
     report_ids = await db.reports.distinct("_id", {"user_id": user_id})
     run_ids = await db.agent_runs.distinct("_id", {"task_id": {"$in": task_ids}}) if task_ids else []
 
