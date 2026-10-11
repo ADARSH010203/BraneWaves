@@ -40,9 +40,9 @@ export default function CostsDashboardPage() {
 
   const stats = [
     { label: "Total Spent", value: formatCost(data.total_spent_usd), icon: DollarSign, color: "text-amber-400", bg: "bg-amber-500/10" },
-    { label: "Avg Per Task", value: formatCost(data.tasks_comparison?.length ? data.total_spent_usd / data.tasks_comparison.length : 0), icon: Activity, color: "text-brand-400", bg: "bg-brand-500/10" },
-    { label: "Active Models", value: data.agent_breakdown?.length || 0, icon: Cpu, color: "text-sky-400", bg: "bg-sky-500/10" },
-    { label: "Total Runs", value: data.agent_breakdown?.reduce((sum: number, a: any) => sum + a.runs, 0) || 0, icon: History, color: "text-purple-400", bg: "bg-purple-500/10" },
+    { label: "Avg Per Task", value: formatCost(data.average_cost_per_task_usd || 0), icon: Activity, color: "text-brand-400", bg: "bg-brand-500/10" },
+    { label: "Agent Types", value: data.agent_type_count || 0, icon: Cpu, color: "text-sky-400", bg: "bg-sky-500/10" },
+    { label: "LLM Calls", value: data.total_runs || 0, icon: History, color: "text-purple-400", bg: "bg-purple-500/10" },
   ];
 
   const pieColors = ["#3b82f6", "#10b981", "#8b5cf6", "#f43f5e", "#f59e0b", "#06b6d4"];
