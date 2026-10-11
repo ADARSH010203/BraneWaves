@@ -9,6 +9,7 @@ import json
 import logging
 import signal
 import sys
+from datetime import datetime, timezone
 
 from app.agents.orchestrator import TaskOrchestrator
 from app.config import get_settings
@@ -21,6 +22,21 @@ setup_logging(settings.LOG_LEVEL)
 logger = logging.getLogger("arc.worker")
 
 _shutdown = False
+WORKER_HEARTBEAT_KEY = "arc:worker:heartbeat"
+
+
+async def _heartbeat_loop() -> None:
+    redis = get_redis()
+    if redis is None:
+        raise RuntimeError("Redis is required for worker heartbeat")
+    interval = max(2, settings.WORKER_HEARTBEAT_TTL_SECONDS // 3)
+    while not _shutdown:
+        await redis.set(
+            WORKER_HEARTBEAT_KEY,
+            datetime.now(timezone.utc).isoformat(),
+            ex=settings.WORKER_HEARTBEAT_TTL_SECONDS,
+        )
+        await asyncio.sleep(interval)
 
 
 async def process_task(task_data: dict) -> None:
@@ -91,9 +107,21 @@ async def main() -> None:
     await connect_redis()
     register_all_tools()
 
+    heartbeat_task = asyncio.create_task(_heartbeat_loop())
     try:
         await worker_loop()
     finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        redis = get_redis()
+        if redis is not None:
+            try:
+                await redis.delete(WORKER_HEARTBEAT_KEY)
+            except Exception:
+                pass
         await disconnect_redis()
         await disconnect_db()
         logger.info("👋 Worker shutdown complete")
