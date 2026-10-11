@@ -7,7 +7,8 @@ import sys
 import redis.asyncio as aioredis
 
 from app.config import get_settings
-from app.workers.task_worker import WORKER_HEARTBEAT_KEY
+
+WORKER_HEARTBEAT_KEY = "arc:worker:heartbeat"
 
 
 async def main() -> int:
