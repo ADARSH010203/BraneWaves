@@ -1,8 +1,9 @@
-"""Live network smoke checks for research providers that do not require Groq."""
+"""Live network smoke checks for research providers."""
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from app.tools.dataset_search import DatasetSearchTool
 from app.tools.paper_search import PaperSearchTool
@@ -12,17 +13,35 @@ from app.tools.web_search import WebSearchTool
 async def main() -> None:
     checks: dict[str, dict] = {}
 
-    web = await WebSearchTool().execute(
-        {"query": "OpenAI artificial intelligence research", "num_results": 3, "language": "en"},
-        "provider-smoke",
+    has_production_search = any(
+        os.getenv(name)
+        for name in ("BRAVE_SEARCH_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY")
     )
-    checks["web_search"] = {
-        "ok": bool(web.get("success") and web.get("results")),
-        "provider": web.get("provider"),
-        "fallback_used": web.get("fallback_used"),
-        "count": len(web.get("results", [])),
-        "error": web.get("error"),
-    }
+    if has_production_search:
+        web = await WebSearchTool().execute(
+            {"query": "OpenAI artificial intelligence research", "num_results": 3, "language": "en"},
+            "provider-smoke",
+        )
+        checks["web_search"] = {
+            "ok": bool(
+                web.get("success")
+                and web.get("results")
+                and web.get("provider") != "duckduckgo"
+            ),
+            "provider": web.get("provider"),
+            "fallback_used": web.get("fallback_used"),
+            "count": len(web.get("results", [])),
+            "error": web.get("error"),
+        }
+    else:
+        checks["web_search"] = {
+            "ok": True,
+            "skipped": True,
+            "reason": (
+                "No Brave/Tavily/Serper repository secret configured. "
+                "DuckDuckGo remains a development fallback, not the production verification target."
+            ),
+        }
 
     papers = await PaperSearchTool().execute(
         {"query": "retrieval augmented generation", "num_results": 3, "year_from": 2023},
@@ -30,6 +49,8 @@ async def main() -> None:
     )
     checks["paper_search"] = {
         "ok": bool(papers.get("success") and papers.get("results")),
+        "provider": papers.get("provider"),
+        "fallback_used": papers.get("fallback_used"),
         "count": len(papers.get("results", [])),
         "error": papers.get("error"),
     }
