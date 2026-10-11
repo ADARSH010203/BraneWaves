@@ -5,11 +5,17 @@ only short-lived access tokens.
 """
 from __future__ import annotations
 
+import hashlib
+import secrets
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from starlette.responses import RedirectResponse
 from authlib.integrations.starlette_client import OAuth
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.database import get_redis
 from app.deps import DbDep, UserDep
 from app.models.user import UserCreate, UserLogin, UserResponse, UserUpdate
 from app.services.account_service import delete_account, update_profile
@@ -25,6 +31,18 @@ from app.services.auth_service import (
 router = APIRouter()
 settings = get_settings()
 REFRESH_COOKIE = "arc_refresh_token"
+
+
+
+
+class OAuthExchangeRequest(BaseModel):
+    code: str = Field(min_length=20, max_length=256)
+
+
+def _oauth_exchange_key(code: str) -> str:
+    digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    return f"arc:oauth:exchange:{digest}"
+
 
 oauth = OAuth()
 if settings.GOOGLE_CLIENT_ID:
@@ -190,6 +208,27 @@ async def delete_me(request: Request, response: Response, db: DbDep, user: UserD
     _clear_refresh_cookie(response)
     return {"success": True, "message": "Account deleted"}
 
+@router.post(
+    "/oauth/exchange",
+    response_model=dict,
+    dependencies=[Depends(rate_limit_by_ip)],
+)
+async def exchange_oauth_code(
+    data: OAuthExchangeRequest,
+    request: Request,
+):
+    """Exchange a short-lived, single-use OAuth callback code for an access token."""
+    _validate_browser_origin(request)
+    redis = get_redis()
+    if redis is None:
+        raise HTTPException(status_code=503, detail="OAuth exchange service is unavailable")
+
+    access_token = await redis.getdel(_oauth_exchange_key(data.code))
+    if not access_token:
+        raise HTTPException(status_code=401, detail="OAuth exchange code is invalid or expired")
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 @router.get("/{provider}/login")
 async def provider_login(provider: str, request: Request):
     client = oauth.create_client(provider)
@@ -236,9 +275,23 @@ async def provider_callback(provider: str, request: Request, db: DbDep):
     except Exception:
         raise HTTPException(status_code=500, detail="OAuth login failed")
 
+    redis = get_redis()
+    if redis is None:
+        raise HTTPException(status_code=503, detail="OAuth exchange service is unavailable")
+
+    exchange_code = secrets.token_urlsafe(32)
+    stored = await redis.set(
+        _oauth_exchange_key(exchange_code),
+        tokens.access_token,
+        ex=settings.OAUTH_EXCHANGE_TTL_SECONDS,
+        nx=True,
+    )
+    if not stored:
+        raise HTTPException(status_code=503, detail="Could not create OAuth exchange")
+
     frontend_url = settings.FRONTEND_URL.rstrip("/")
     response = RedirectResponse(
-        f"{frontend_url}/login/callback#access_token={tokens.access_token}"
+        f"{frontend_url}/login/callback?code={quote(exchange_code)}"
     )
     _set_refresh_cookie(response, tokens.refresh_token)
     return response
