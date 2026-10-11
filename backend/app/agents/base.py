@@ -250,8 +250,15 @@ class BaseAgent(ABC):
 
     # ── Lifecycle ────────────────────────────────────────────────────────
     async def start_run(self, input_data: dict[str, Any]) -> None:
-        """Record run start in MongoDB."""
+        """Record run start in MongoDB and resolve any active prompt override."""
         db = get_db()
+        try:
+            from app.security.prompt_versioning import get_active_prompt
+            active_prompt = await get_active_prompt(self.agent_type.value)
+            if active_prompt:
+                self.system_prompt = active_prompt
+        except Exception:
+            pass
         doc = {
             "_id": self.run_id,
             "user_id": self.user_id,
@@ -270,6 +277,17 @@ class BaseAgent(ABC):
             "retries": 0,
         }
         await db.agent_runs.insert_one(doc)
+        try:
+            from app.security.audit import AuditAction, audit_log
+            await audit_log(
+                AuditAction.AGENT_START,
+                user_id=self.user_id,
+                resource_type="agent_run",
+                resource_id=self.run_id,
+                details={"task_id": self.task_id, "step_id": self.step_id, "agent_type": self.agent_type.value},
+            )
+        except Exception:
+            pass
 
     async def complete_run(
         self,
@@ -296,6 +314,19 @@ class BaseAgent(ABC):
             }
         }
         await db.agent_runs.update_one({"_id": self.run_id}, update)
+        try:
+            from app.security.audit import AuditAction, audit_log
+            action = AuditAction.AGENT_COMPLETE if status == AgentRunStatus.COMPLETED else AuditAction.AGENT_FAIL
+            await audit_log(
+                action,
+                user_id=self.user_id,
+                resource_type="agent_run",
+                resource_id=self.run_id,
+                details={"task_id": self.task_id, "step_id": self.step_id, "agent_type": self.agent_type.value, "error": error},
+                success=status == AgentRunStatus.COMPLETED,
+            )
+        except Exception:
+            pass
 
     # ── Budget ───────────────────────────────────────────────────────────
     def _check_budget(self) -> None:
@@ -445,6 +476,9 @@ class BaseAgent(ABC):
             if schema:
                 tools_schema.append(schema)
 
+        from app.security.loop_detector import LoopDetector
+        loop_detector = LoopDetector(task_id=self.task_id)
+
         iterations = 0
         total_cost = 0.0
         total_tokens = 0
@@ -517,6 +551,9 @@ class BaseAgent(ABC):
                     except Exception:
                         t_args = {}
                     
+                    loop_detector.record_action(t_name, t_args)
+                    loop_detector.check()
+
                     try:
                         scopes = {"basic"}
                         if "python_sandbox" in available_tools:
@@ -531,6 +568,8 @@ class BaseAgent(ABC):
                     except Exception as e:
                         result_str = json.dumps({"error": str(e)})
                         
+                    loop_detector.record_output(result_str)
+                    loop_detector.check()
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
