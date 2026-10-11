@@ -150,6 +150,13 @@ class ApiClient {
         });
     }
 
+    async exchangeOAuthCode(code: string) {
+        return this.request<{ access_token: string; token_type: string }>("/auth/oauth/exchange", {
+            method: "POST",
+            body: JSON.stringify({ code }),
+        });
+    }
+
     async getMe() {
         return this.request<any>("/auth/me");
     }
