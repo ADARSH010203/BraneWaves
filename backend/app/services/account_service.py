@@ -79,6 +79,7 @@ async def delete_account(db: AsyncIOMotorDatabase, user_id: str) -> None:
         "usage_cost",
         "memory_nodes",
         "memory_edges",
+        "audit_logs",
         "tasks",
     ]:
         await db[name].delete_many({"user_id": user_id})
