@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database import connect_db, connect_redis, disconnect_db, disconnect_redis, get_db, get_redis
-from app.middleware import RequestSizeLimitMiddleware, TraceIDMiddleware
+from app.middleware import RequestSizeLimitMiddleware, SecurityHeadersMiddleware, TraceIDMiddleware
 from app.observability.logger import setup_logging
 from app.routes import auth, files, tasks, ws, analytics, templates, knowledge_base, memory
 from app.tools.registry import register_all_tools
@@ -91,6 +91,7 @@ app.add_middleware(
     same_site="lax",
 )
 app.add_middleware(TraceIDMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
