@@ -40,6 +40,14 @@ async def lifespan(app: FastAPI):
             raise RuntimeError(message)
         logger.warning(message)
 
+    if settings.ENVIRONMENT == "production":
+        frontend_origin = settings.FRONTEND_URL.rstrip("/")
+        allowed_origins = {origin.rstrip("/") for origin in settings.ALLOWED_ORIGINS}
+        if frontend_origin not in allowed_origins:
+            raise RuntimeError("FRONTEND_URL must be present in ALLOWED_ORIGINS in production.")
+        if settings.REFRESH_COOKIE_SAMESITE == "none" and not frontend_origin.startswith("https://"):
+            raise RuntimeError("SameSite=None refresh cookies require an HTTPS FRONTEND_URL.")
+
     if len(settings.JWT_SECRET_KEY) < 32:
         raise RuntimeError("JWT_SECRET_KEY must be at least 32 characters.")
     if settings.JWT_SECRET_KEY.startswith("CHANGE-ME"):
@@ -70,7 +78,12 @@ app = FastAPI(
 
 # ── Middleware (order matters — outermost first) ─────────────────────────────
 from starlette.middleware.sessions import SessionMiddleware
-app.add_middleware(SessionMiddleware, secret_key=settings.JWT_SECRET_KEY)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.JWT_SECRET_KEY,
+    https_only=settings.ENVIRONMENT == "production",
+    same_site="lax",
+)
 app.add_middleware(TraceIDMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(

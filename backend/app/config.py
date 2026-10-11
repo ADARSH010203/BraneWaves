@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     LOG_LEVEL: str = "INFO"
     ALLOWED_ORIGINS: list[str] = Field(default=["http://localhost:3000"])
+    FRONTEND_URL: str = "http://localhost:3000"
 
     # ── MongoDB ──────────────────────────────────────────────────────────
     MONGO_URI: MongoDsn = Field(default="mongodb://localhost:27017")  # type: ignore[assignment]
@@ -42,6 +43,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: Literal["HS256"] = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    REFRESH_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
 
     # ── Groq / LLM (Groq-only — no other provider keys needed) ─────────
     GROQ_API_KEY: str = ""
@@ -55,6 +57,7 @@ class Settings(BaseSettings):
     )
     FALLBACK_LLM_PROVIDER: str = "groq"
     FALLBACK_LLM_MODEL: str = "openai/gpt-oss-120b"
+    LLM_REQUEST_TIMEOUT_SECONDS: int = 60
     EVAL_LLM_PROVIDER: str = "groq"
     EVAL_LLM_MODEL: str = "openai/gpt-oss-20b"
 

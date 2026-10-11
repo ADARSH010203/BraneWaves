@@ -20,7 +20,9 @@ export function clearTokens(): void {
 }
 
 export function setUser(user: User): void {
+    if (typeof window === "undefined") return;
     localStorage.setItem("arc_user", JSON.stringify(user));
+    window.dispatchEvent(new CustomEvent("arc-user-updated", { detail: user }));
 }
 
 export function getUser(): User | null {

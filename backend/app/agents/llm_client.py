@@ -98,6 +98,7 @@ async def chat_completion(
         "max_tokens": max_tokens,
         "stream": stream,
         "api_key": settings.GROQ_API_KEY,
+        "timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS,
     }
     if response_format:
         kwargs["response_format"] = response_format

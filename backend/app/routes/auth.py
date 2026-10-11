@@ -10,8 +10,9 @@ from starlette.responses import RedirectResponse
 from authlib.integrations.starlette_client import OAuth
 
 from app.config import get_settings
-from app.deps import DbDep
-from app.models.user import UserCreate, UserLogin
+from app.deps import DbDep, UserDep
+from app.models.user import UserCreate, UserLogin, UserResponse, UserUpdate
+from app.services.account_service import delete_account, update_profile
 from app.security.rate_limiter import rate_limit_by_ip
 from app.services.auth_service import (
     login_user,
@@ -46,13 +47,22 @@ if settings.GITHUB_CLIENT_ID:
     )
 
 
+def _validate_browser_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    allowed = {value.rstrip("/") for value in settings.ALLOWED_ORIGINS}
+    if origin.rstrip("/") not in allowed:
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+
+
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
     response.set_cookie(
         key=REFRESH_COOKIE,
         value=refresh_token,
         httponly=True,
-        secure=settings.ENVIRONMENT == "production",
-        samesite="lax",
+        secure=settings.ENVIRONMENT == "production" or settings.REFRESH_COOKIE_SAMESITE == "none",
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
         max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         path="/auth",
     )
@@ -62,8 +72,8 @@ def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key=REFRESH_COOKIE,
         path="/auth",
-        secure=settings.ENVIRONMENT == "production",
-        samesite="lax",
+        secure=settings.ENVIRONMENT == "production" or settings.REFRESH_COOKIE_SAMESITE == "none",
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
     )
 
 
@@ -112,6 +122,7 @@ async def login(data: UserLogin, response: Response, db: DbDep):
     dependencies=[Depends(rate_limit_by_ip)],
 )
 async def refresh(request: Request, response: Response, db: DbDep):
+    _validate_browser_origin(request)
     refresh_token = request.cookies.get(REFRESH_COOKIE)
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh session missing")
@@ -130,6 +141,7 @@ async def refresh(request: Request, response: Response, db: DbDep):
     dependencies=[Depends(rate_limit_by_ip)],
 )
 async def logout(request: Request, response: Response, db: DbDep):
+    _validate_browser_origin(request)
     refresh_token = request.cookies.get(REFRESH_COOKIE)
     deleted = False
     if refresh_token:
@@ -140,6 +152,43 @@ async def logout(request: Request, response: Response, db: DbDep):
         "message": "Logged out successfully" if deleted else "Session was already inactive",
     }
 
+
+
+
+@router.get("/me", response_model=UserResponse)
+async def me(user: UserDep):
+    """Return the authoritative current account profile."""
+    return UserResponse(
+        id=str(user["_id"]),
+        email=user["email"],
+        name=user["name"],
+        provider=user.get("provider", "local"),
+        role=user.get("role", "user"),
+        plan=user.get("plan", "free"),
+        usage_quota_usd=float(user.get("usage_quota_usd", 10.0)),
+        created_at=user["created_at"],
+        is_active=user.get("is_active", True),
+    )
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(data: UserUpdate, db: DbDep, user: UserDep):
+    """Update editable profile fields."""
+    try:
+        return await update_profile(db, user["_id"], data.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/me")
+async def delete_me(request: Request, response: Response, db: DbDep, user: UserDep):
+    """Permanently remove the authenticated account and owned application data."""
+    refresh_token = request.cookies.get(REFRESH_COOKIE)
+    if refresh_token:
+        await logout_user(db, refresh_token)
+    await delete_account(db, user["_id"])
+    _clear_refresh_cookie(response)
+    return {"success": True, "message": "Account deleted"}
 
 @router.get("/{provider}/login")
 async def provider_login(provider: str, request: Request):
@@ -187,7 +236,7 @@ async def provider_callback(provider: str, request: Request, db: DbDep):
     except Exception:
         raise HTTPException(status_code=500, detail="OAuth login failed")
 
-    frontend_url = settings.ALLOWED_ORIGINS[0].rstrip("/")
+    frontend_url = settings.FRONTEND_URL.rstrip("/")
     response = RedirectResponse(
         f"{frontend_url}/login/callback#access_token={tokens.access_token}"
     )

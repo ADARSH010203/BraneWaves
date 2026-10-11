@@ -27,22 +27,30 @@ class PaperSearchTool(BaseTool):
     description = "Search for academic papers on a given topic"
     input_schema = PaperSearchInput
     timeout_seconds = 30
-    cost_estimate_usd = 0.0005
+    cost_estimate_usd = 0.0
     permission_scope = "basic"
 
     async def execute(self, params: dict[str, Any], user_id: str) -> dict[str, Any]:
         query = params["query"]
         num_results = params.get("num_results", 10)
+        year_from = params.get("year_from")
+        fields_of_study = [str(v).strip() for v in params.get("fields_of_study", []) if str(v).strip()]
+
+        search_params = {
+            "query": query,
+            "limit": num_results,
+            "fields": "title,abstract,authors,year,citationCount,url,externalIds,fieldsOfStudy",
+        }
+        if year_from:
+            search_params["year"] = f"{int(year_from)}-"
+        if fields_of_study:
+            search_params["fieldsOfStudy"] = ",".join(fields_of_study)
 
         try:
             async with httpx.AsyncClient(timeout=25) as client:
                 resp = await client.get(
                     "https://api.semanticscholar.org/graph/v1/paper/search",
-                    params={
-                        "query": query,
-                        "limit": num_results,
-                        "fields": "title,abstract,authors,year,citationCount,url,externalIds",
-                    },
+                    params=search_params,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -58,6 +66,7 @@ class PaperSearchTool(BaseTool):
                     "citation_count": paper.get("citationCount", 0),
                     "url": paper.get("url", ""),
                     "doi": paper.get("externalIds", {}).get("DOI", ""),
+                    "fields_of_study": paper.get("fieldsOfStudy", []),
                 })
 
             return {

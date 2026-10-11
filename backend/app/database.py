@@ -114,10 +114,12 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.task_steps.create_index([("task_id", 1), ("order", 1)])
 
     # Agent Runs
+    await db.agent_runs.create_index("user_id")
     await db.agent_runs.create_index("task_id")
     await db.agent_runs.create_index([("task_id", 1), ("step_id", 1)])
 
     # Agent Logs
+    await db.agent_logs.create_index("user_id")
     await db.agent_logs.create_index("run_id")
     await db.agent_logs.create_index("timestamp")
 
@@ -136,9 +138,18 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     # Reports
     await db.reports.create_index("task_id", unique=True)
 
+    # Report follow-up chat / retrieval
+    await db.report_chunks.create_index([("user_id", 1), ("report_id", 1)])
+    await db.report_chunks.create_index([("user_id", 1), ("task_id", 1)])
+    await db.report_chats.create_index([("user_id", 1), ("task_id", 1), ("created_at", 1)])
+
     # Usage Cost
     await db.usage_cost.create_index("user_id")
     await db.usage_cost.create_index("task_id")
+
+    # Audit Logs
+    await db.audit_logs.create_index([("user_id", 1), ("timestamp", -1)])
+    await db.audit_logs.create_index("action")
 
     # Prompt Versions
     await db.prompt_versions.create_index([("agent_type", 1), ("version", -1)])

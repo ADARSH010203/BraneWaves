@@ -308,7 +308,21 @@ class TaskOrchestrator:
             return {"error": str(e)}
 
         # ── Phase 3: Report Generation ───────────────────────────────────
-        task_budget = (await db.tasks.find_one({"_id": self.task_id})).get("budget", {})
+        # Account deletion/cancellation may happen after the final execution
+        # batch. Re-check before starting the final Report LLM call.
+        try:
+            await self._check_cancellation()
+        except TaskCancelledException:
+            await self._cancel_task()
+            return {"status": "cancelled", "task_id": self.task_id}
+
+        current_task = await db.tasks.find_one(
+            {"_id": self.task_id, "user_id": self.user_id},
+            {"budget": 1},
+        )
+        if not current_task:
+            return {"status": "cancelled", "task_id": self.task_id}
+        task_budget = current_task.get("budget", {})
         max_usd = float(task_budget.get("max_usd", settings.MAX_TASK_BUDGET_USD))
         if self._total_cost >= max_usd:
             await self._fail_task(
@@ -519,13 +533,25 @@ class TaskOrchestrator:
             await agent.complete_run(output, confidence=confidence)
             self._total_cost += agent._total_cost
 
+            usage_rows = await db.usage_cost.aggregate([
+                {"$match": {"task_id": self.task_id, "step_id": sid}},
+                {"$group": {
+                    "_id": None,
+                    "cost": {"$sum": "$cost_usd"},
+                    "tokens": {"$sum": "$tokens_total"},
+                }},
+            ]).to_list(length=1)
+            step_cost = float(usage_rows[0]["cost"]) if usage_rows else agent._total_cost
+            step_tokens = int(usage_rows[0]["tokens"]) if usage_rows else agent._total_tokens
+
             await db.task_steps.update_one(
                 {"_id": sid},
                 {"$set": {
                     "status": StepStatus.COMPLETED.value,
                     "output_data": output,
                     "confidence": confidence,
-                    "cost_usd": agent._total_cost,
+                    "cost_usd": step_cost,
+                    "tokens": step_tokens,
                     "completed_at": datetime.now(timezone.utc),
                 }},
             )
@@ -540,7 +566,8 @@ class TaskOrchestrator:
                 "step_id": sid,
                 "status": "completed",
                 "confidence": confidence,
-                "cost_usd": agent._total_cost,
+                "cost_usd": step_cost,
+                "tokens": step_tokens,
             })
 
             return output
@@ -688,6 +715,12 @@ class TaskOrchestrator:
             }
             await db.reports.insert_one(report_doc)
 
+            try:
+                from app.services.report_chat_service import index_report_for_chat
+                await index_report_for_chat(db, report_doc)
+            except Exception as exc:
+                logger.warning("Report chat indexing failed for task %s: %s", self.task_id, exc)
+
             await db.tasks.update_one(
                 {"_id": self.task_id},
                 {"$set": {"report_id": report_id, "result_summary": report.get("summary", "")}},
@@ -757,17 +790,23 @@ class TaskOrchestrator:
                     raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
             else:
                 db = get_db()
-                task = await db.tasks.find_one({"_id": self.task_id}, {"status": 1})
-                if task and task.get("status") == TaskStatus.CANCELLED.value:
-                    raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+                task = await db.tasks.find_one(
+                    {"_id": self.task_id, "user_id": self.user_id},
+                    {"status": 1},
+                )
+                if not task or task.get("status") == TaskStatus.CANCELLED.value:
+                    raise TaskCancelledException(f"Task {self.task_id} is unavailable or cancelled")
         except TaskCancelledException:
             raise
         except Exception as e:
             # Redis unavailable — also check MongoDB status as fallback
             db = get_db()
-            task = await db.tasks.find_one({"_id": self.task_id}, {"status": 1})
-            if task and task.get("status") == TaskStatus.CANCELLED.value:
-                raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+            task = await db.tasks.find_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"status": 1},
+            )
+            if not task or task.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledException(f"Task {self.task_id} is unavailable or cancelled")
 
     async def _cancel_task(self) -> None:
         """Mark task as cancelled."""

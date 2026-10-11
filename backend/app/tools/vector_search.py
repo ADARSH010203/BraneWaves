@@ -26,7 +26,7 @@ class VectorSearchTool(BaseTool):
     description = "Search the authenticated knowledge base for relevant document chunks"
     input_schema = VectorSearchInput
     timeout_seconds = 15
-    cost_estimate_usd = 0.0002
+    cost_estimate_usd = 0.0
     permission_scope = "basic"
 
     async def execute(self, params: dict[str, Any], user_id: str) -> dict[str, Any]:

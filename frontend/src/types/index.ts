@@ -5,6 +5,7 @@ export interface User {
     id: string;
     email: string;
     name: string;
+    provider: string;
     role: "user" | "admin";
     plan: "free" | "pro" | "enterprise";
     usage_quota_usd: number;
@@ -14,7 +15,6 @@ export interface User {
 
 export interface TokenResponse {
     access_token: string;
-    refresh_token: string;
     token_type: string;
 }
 

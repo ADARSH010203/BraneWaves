@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Brain, Search, Trash2, X, Sparkles, GitBranch, Zap, Loader2 } from "lucide-react";
+import * as d3 from "d3";
 
 interface GraphNode {
   id: string;
@@ -74,22 +75,7 @@ export default function BrainPage() {
   useEffect(() => {
     if (nodes.length === 0 || !svgRef.current) return;
 
-    const loadD3 = async () => {
-      // @ts-ignore
-      if (typeof window !== "undefined" && !(window as any).d3) {
-        await new Promise<void>((resolve) => {
-          const script = document.createElement("script");
-          script.src = "https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js";
-          script.onload = () => resolve();
-          document.head.appendChild(script);
-        });
-      }
-
-      // @ts-ignore
-      const d3 = (window as any).d3;
-      if (!d3) return;
-
-      const svg = d3.select(svgRef.current);
+    const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
 
       const rect = svgRef.current!.getBoundingClientRect();
@@ -121,7 +107,7 @@ export default function BrainPage() {
       // Zoom
       const g = svg.append("g");
       svg.call(
-        d3.zoom().scaleExtent([0.3, 3]).on("zoom", (event: any) => {
+        d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 3]).on("zoom", (event) => {
           g.attr("transform", event.transform);
         })
       );
@@ -150,13 +136,13 @@ export default function BrainPage() {
       // Node groups
       const node = g
         .append("g")
-        .selectAll("g")
+        .selectAll<SVGGElement, GraphNode>("g")
         .data(simNodes)
         .join("g")
         .style("cursor", "pointer")
         .call(
           d3
-            .drag()
+            .drag<SVGGElement, GraphNode>()
             .on("start", (event: any, d: any) => {
               if (!event.active) simulation.alphaTarget(0.3).restart();
               d.fx = d.x;
@@ -217,9 +203,6 @@ export default function BrainPage() {
           .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
           .attr("y", (d: any) => (d.source.y + d.target.y) / 2 - 4);
       });
-    };
-
-    loadD3();
 
     return () => {
       if (simulationRef.current) {
@@ -248,10 +231,6 @@ export default function BrainPage() {
   // Highlight matching nodes
   useEffect(() => {
     if (!svgRef.current) return;
-    // @ts-ignore
-    const d3 = (window as any).d3;
-    if (!d3) return;
-
     const svg = d3.select(svgRef.current);
     svg.selectAll(".node-circle").attr("opacity", (d: any) => {
       if (searchResults.length === 0) return 1;

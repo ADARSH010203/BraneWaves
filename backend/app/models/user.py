@@ -37,6 +37,11 @@ class UserLogin(BaseModel):
     password: str
 
 
+class UserUpdate(BaseModel):
+    """Editable account fields."""
+    name: str = Field(min_length=1, max_length=100)
+
+
 class UserDoc(BaseModel):
     """MongoDB user document shape."""
     id: str = Field(alias="_id")

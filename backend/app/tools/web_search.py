@@ -29,12 +29,25 @@ class WebSearchTool(BaseTool):
     description = "Search the web for information on a given topic"
     input_schema = WebSearchInput
     timeout_seconds = 30
-    cost_estimate_usd = 0.001
+    cost_estimate_usd = 0.0
     permission_scope = "basic"
 
     async def execute(self, params: dict[str, Any], user_id: str) -> dict[str, Any]:
         query = params["query"]
         num_results = params.get("num_results", 10)
+        language = str(params.get("language", "en")).lower()
+        locale_map = {
+            "en": "us-en",
+            "de": "de-de",
+            "fr": "fr-fr",
+            "es": "es-es",
+            "it": "it-it",
+            "nl": "nl-nl",
+            "no": "no-no",
+            "sv": "se-sv",
+            "hi": "in-en",
+        }
+        locale = locale_map.get(language, "us-en")
 
         # Use a search API (DuckDuckGo instant answer as fallback)
         try:
@@ -47,6 +60,7 @@ class WebSearchTool(BaseTool):
                         "format": "json",
                         "no_redirect": 1,
                         "no_html": 1,
+                        "kl": locale,
                     },
                 )
                 resp.raise_for_status()

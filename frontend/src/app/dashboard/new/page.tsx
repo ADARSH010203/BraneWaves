@@ -21,6 +21,7 @@ export default function NewTaskPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [budget, setBudget] = useState(5);
+  const [maxBudget, setMaxBudget] = useState(5);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [error, setError] = useState("");
@@ -48,8 +49,21 @@ export default function NewTaskPage() {
         console.error("Failed to load knowledge base", err);
       }
     }
+    async function loadCapabilities() {
+      try {
+        const caps = await api.getCapabilities();
+        const configuredMax = Number(caps.max_task_budget_usd || 5);
+        setMaxBudget(configuredMax);
+        setBudget((current) => Math.min(current, configuredMax));
+      } catch (err) {
+        console.error("Failed to load capabilities", err);
+      }
+    }
+    const quickTitle = new URLSearchParams(window.location.search).get("title");
+    if (quickTitle) setTitle(quickTitle);
     loadTemplates();
     loadKnowledgeBase();
+    loadCapabilities();
   }, []);
 
   // Debounced memory search
@@ -72,7 +86,7 @@ export default function NewTaskPage() {
   const selectTemplate = (t: any) => {
     setTitle(t.title);
     setDescription(t.example_prompts[0] || t.description);
-    setBudget(t.suggested_budget);
+    setBudget(Math.min(Number(t.suggested_budget || 5), maxBudget));
     setTags(t.suggested_tags);
   };
 
@@ -128,7 +142,8 @@ export default function NewTaskPage() {
     } catch (e: any) { setError(e.message || "Failed"); }
   };
 
-  const budgetPercent = ((budget - 0.5) / (50 - 0.5)) * 100;
+  const minBudget = Math.min(0.5, maxBudget);
+  const budgetPercent = maxBudget <= minBudget ? 100 : ((budget - minBudget) / (maxBudget - minBudget)) * 100;
 
   return (
     <div className="max-w-3xl mx-auto animate-fade-in">
@@ -138,7 +153,7 @@ export default function NewTaskPage() {
           <Sparkles className="h-6 w-6 text-brand-400" />
           <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">Deploy Research Task</h1>
         </div>
-        <p className="text-slate-400 text-lg">Define your objective and let the 7-agent pipeline handle the rest.</p>
+        <p className="text-slate-400 text-lg">Define your objective and let the validated multi-agent pipeline handle the rest.</p>
       </div>
 
       {/* Premium Stepper */}
@@ -253,11 +268,13 @@ export default function NewTaskPage() {
                     <div className="h-full rounded-full bg-gradient-to-r from-brand-500 via-purple-500 to-cyan-500 transition-all duration-300"
                       style={{ width: `${budgetPercent}%` }} />
                   </div>
-                  <input type="range" min={0.5} max={50} step={0.5} value={budget}
+                  <input type="range" min={minBudget} max={maxBudget} step={0.5} value={budget}
                     onChange={e => setBudget(parseFloat(e.target.value))}
                     className="w-full absolute top-0 h-3 opacity-0 cursor-pointer" />
                   <div className="flex justify-between text-xs text-slate-500 mt-1">
-                    <span>$0.50</span><span>$25.00</span><span>$50.00</span>
+                    <span>${minBudget.toFixed(2)}</span>
+                    <span>Backend maximum</span>
+                    <span>${maxBudget.toFixed(2)}</span>
                   </div>
                 </div>
               </div>

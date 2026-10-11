@@ -4,6 +4,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 class ApiClient {
     private baseUrl: string;
+    private refreshPromise: Promise<boolean> | null = null;
 
     constructor(baseUrl: string) {
         this.baseUrl = baseUrl;
@@ -12,6 +13,38 @@ class ApiClient {
     private getToken(): string | null {
         if (typeof window === "undefined") return null;
         return localStorage.getItem("arc_access_token");
+    }
+
+
+    private async authorizedFetch(
+        path: string,
+        options: RequestInit = {},
+    ): Promise<Response> {
+        const buildHeaders = (): HeadersInit => {
+            const token = this.getToken();
+            return {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(options.headers || {}),
+            };
+        };
+
+        let res = await fetch(`${this.baseUrl}${path}`, {
+            ...options,
+            headers: buildHeaders(),
+            credentials: "include",
+        });
+
+        if (res.status === 401) {
+            const refreshed = await this.refreshToken();
+            if (refreshed) {
+                res = await fetch(`${this.baseUrl}${path}`, {
+                    ...options,
+                    headers: buildHeaders(),
+                    credentials: "include",
+                });
+            }
+        }
+        return res;
     }
 
     private async request<T>(
@@ -81,19 +114,25 @@ class ApiClient {
     }
 
     private async refreshToken(): Promise<boolean> {
-        try {
-            const res = await fetch(`${this.baseUrl}/auth/refresh`, {
-                method: "POST",
-                credentials: "include",
-            });
-            if (!res.ok) return false;
-            const data = await res.json();
-            localStorage.setItem("arc_access_token", data.access_token);
-            localStorage.removeItem("arc_refresh_token");
-            return true;
-        } catch {
-            return false;
-        }
+        if (this.refreshPromise) return this.refreshPromise;
+        this.refreshPromise = (async () => {
+            try {
+                const res = await fetch(`${this.baseUrl}/auth/refresh`, {
+                    method: "POST",
+                    credentials: "include",
+                });
+                if (!res.ok) return false;
+                const data = await res.json();
+                localStorage.setItem("arc_access_token", data.access_token);
+                localStorage.removeItem("arc_refresh_token");
+                return true;
+            } catch {
+                return false;
+            } finally {
+                this.refreshPromise = null;
+            }
+        })();
+        return this.refreshPromise;
     }
 
     // ── Auth ──────────────────────────────────────────────────────────
@@ -108,6 +147,23 @@ class ApiClient {
         return this.request<any>("/auth/login", {
             method: "POST",
             body: JSON.stringify({ email, password }),
+        });
+    }
+
+    async getMe() {
+        return this.request<any>("/auth/me");
+    }
+
+    async updateMe(name: string) {
+        return this.request<any>("/auth/me", {
+            method: "PATCH",
+            body: JSON.stringify({ name }),
+        });
+    }
+
+    async deleteMe() {
+        return this.request<{ success: boolean; message: string }>("/auth/me", {
+            method: "DELETE",
         });
     }
 
@@ -178,12 +234,9 @@ class ApiClient {
         formData.append("file", file);
         if (taskId) formData.append("task_id", taskId);
 
-        const token = this.getToken();
-        const res = await fetch(`${this.baseUrl}/files/upload`, {
+        const res = await this.authorizedFetch("/files/upload", {
             method: "POST",
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: formData,
-            credentials: "include",
         });
         if (!res.ok) throw new ApiError(res.status, await res.text());
         return res.json();
@@ -193,12 +246,9 @@ class ApiClient {
     async uploadKBFile(file: File) {
         const formData = new FormData();
         formData.append("file", file);
-        const token = this.getToken();
-        const res = await fetch(`${this.baseUrl}/knowledge-base/upload`, {
+        const res = await this.authorizedFetch("/knowledge-base/upload", {
             method: "POST",
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
             body: formData,
-            credentials: "include",
         });
         if (!res.ok) throw new ApiError(res.status, await res.text());
         return res.json();
@@ -214,13 +264,8 @@ class ApiClient {
 
     // ── Report Export (FEAT-01) ───────────────────────────────────────
     async exportReport(taskId: string, format: "pdf" | "docx"): Promise<void> {
-        const token = this.getToken();
-        const res = await fetch(
-            `${this.baseUrl}/tasks/${taskId}/export?format=${format}`,
-            {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-                credentials: "include",
-            }
+        const res = await this.authorizedFetch(
+            `/tasks/${taskId}/export?format=${format}`,
         );
         if (!res.ok) {
             const body = await res.text();
@@ -256,16 +301,33 @@ class ApiClient {
     }
 
     // ── Report Chat (FEAT-07) ────────────────────────────────────────
+    async getReportChat(taskId: string) {
+        return this.request<{ messages: Array<{ role: "user" | "assistant"; content: string; created_at: string }> }>(
+            `/tasks/${taskId}/chat`
+        );
+    }
+
     async chatWithReport(taskId: string, message: string) {
-        return this.request<{ reply: string }>(`/tasks/${taskId}/chat`, {
-            method: "POST",
-            body: JSON.stringify({ message }),
-        });
+        return this.request<{ reply: string; context_chunks: Array<{ chunk_id: string; index: number; score: number }> }>(
+            `/tasks/${taskId}/chat`,
+            {
+                method: "POST",
+                body: JSON.stringify({ message }),
+            }
+        );
     }
 
     // ── Analytics (FEAT-06) ──────────────────────────────────────────
     async getCostAnalytics() {
         return this.request<any>("/analytics/costs");
+    }
+
+    async getDashboardSummary() {
+        return this.request<any>("/analytics/summary");
+    }
+
+    async getCapabilities() {
+        return this.request<any>("/analytics/capabilities");
     }
 
     // ── Memory Graph (ARC Brain) ────────────────────────────────────

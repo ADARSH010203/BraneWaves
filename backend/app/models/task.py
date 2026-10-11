@@ -128,6 +128,7 @@ class TaskStepDoc(BaseModel):
     retries: int = 0
     max_retries: int = 3
     cost_usd: float = 0.0
+    tokens: int = 0
     error: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None

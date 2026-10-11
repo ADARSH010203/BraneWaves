@@ -7,22 +7,29 @@ import { useTask } from "@/hooks/useTask";
 import { formatDate, getStatusColor, truncate, cn } from "@/lib/utils";
 import { PlusCircle, ClipboardList, Cpu, DollarSign, ArrowRight, Activity, Sparkles } from "lucide-react";
 import { DashboardSkeleton } from "@/components/skeletons/DashboardSkeleton";
+import { api } from "@/lib/api";
 
 export default function DashboardPage() {
     const { tasks, total, loading, fetchTasks } = useTask();
     const [statusFilter, setStatusFilter] = useState<string>("all");
+    const [summary, setSummary] = useState<any>(null);
 
-    useEffect(() => { fetchTasks(); }, [fetchTasks]);
+    useEffect(() => {
+        void fetchTasks();
+        void api.getDashboardSummary().then(setSummary).catch((err) => {
+            console.error("Failed to load dashboard summary", err);
+        });
+    }, [fetchTasks]);
 
     if (loading && tasks.length === 0) {
         return <DashboardSkeleton />;
     }
 
     const stats = [
-        { label: "Total Tasks", value: total, icon: ClipboardList, color: "text-brand-400", bg: "bg-brand-500/10", border: "border-brand-500/20" },
-        { label: "Active Agents", value: tasks.filter((t) => t.status === "running" || t.status === "planning").length * 7, icon: Cpu, color: "text-sky-400", bg: "bg-sky-500/10", border: "border-sky-500/20" },
-        { label: "Completed", value: tasks.filter((t) => t.status === "completed").length, icon: CheckCircleIcon, color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
-        { label: "Total Spent", value: `$${tasks.reduce((s, t) => s + (t.budget?.spent_usd || 0), 0).toFixed(2)}`, icon: DollarSign, color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
+        { label: "Total Tasks", value: summary?.total_tasks ?? total, icon: ClipboardList, color: "text-brand-400", bg: "bg-brand-500/10", border: "border-brand-500/20" },
+        { label: "Active Agents", value: summary?.active_agents ?? 0, icon: Cpu, color: "text-sky-400", bg: "bg-sky-500/10", border: "border-sky-500/20" },
+        { label: "Completed", value: summary?.completed_tasks ?? 0, icon: CheckCircleIcon, color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+        { label: "Total Spent", value: `${Number(summary?.total_spent_usd ?? 0).toFixed(2)}`, icon: DollarSign, color: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/20" },
     ];
 
     const filteredTasks = statusFilter === "all" ? tasks : tasks.filter(t => t.status === statusFilter);
