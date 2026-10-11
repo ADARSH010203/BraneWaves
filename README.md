@@ -21,12 +21,14 @@
 
 ## 🚀 Features
 
-- **7-Agent Pipeline:** Planner, Research, Data, Code, Critic, Repair, and Report agents orchestrated via a DAG (Directed Acyclic Graph) executor.
-- **Real-Time Telemetry:** Live WebSocket streaming directly to the frontend, visualised through a beautiful physics-based Framer Motion timeline.
-- **Persistent Knowledge Base (RAG):** Upload PDF, Markdown, CSV, TXT, JSON, and DOCX context documents. Embeddings are stored in MongoDB and searched with an in-process FAISS index. Large deployments should use a persistent vector service.
-- **Cost Analytics Dashboard:** Aggregate lifetime task costs, token usage, per-agent spend, daily trends, and recent task costs.
-- **Robust Authentication:** Traditional Email/Password + OAuth2 (Google & GitHub) backed by secure JWT sessions.
-- **Export & Delivery:** Automatically generate polished outputs downloadable as rich Markdown, PDF, or DOCX formats.
+- **Validated Multi-Agent DAG:** Planner generates only Research/Data/Code execution steps; the orchestrator owns Critic, Repair, final Report, and post-report Memory processing. Invalid/cyclic dependency graphs are rejected before execution.
+- **Real-Time Telemetry:** Redis-backed WebSocket events update live task state, costs, steps, and an actual dependency DAG in the frontend.
+- **Persistent Knowledge Base (RAG):** Upload PDF, DOCX, Markdown, CSV, TXT, and JSON documents; choose all or selected documents per task. Research is automatically grounded in relevant private chunks with file/page provenance.
+- **ARC Brain:** Completed reports produce semantic memory nodes/relationships that can ground future planning with bounded prior-report evidence.
+- **Report Follow-up Chat:** Multi-turn conversations use semantic retrieval over the generated report instead of a fixed character prefix.
+- **Cost Analytics Dashboard:** Authoritative lifetime cost, token usage, agent-type spend, daily trends, quota usage, and recent task costs.
+- **Robust Authentication:** Email/password + verified Google/GitHub OAuth identities, short-lived access tokens, and hashed refresh sessions delivered via HttpOnly cookies.
+- **Export & Delivery:** Final reports can be downloaded as PDF or DOCX with web and local-document citation provenance.
 
 ---
 
@@ -78,9 +80,10 @@ venv\Scripts\activate
 # Mac/Linux
 source venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
-# (Also ensure you have installed authlib and httpx from recent upgrades: pip install authlib httpx)
+# Install the exact tested dependency set
+pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+
+# requirements.txt remains the human-maintained direct-dependency manifest.
 ```
 
 ### Environment Variables (.env)
@@ -126,8 +129,8 @@ Open a new terminal window, navigate to the `frontend` directory, and install th
 ```bash
 cd frontend
 
-# Install dependencies
-npm install
+# Install the exact tested dependency set
+npm ci
 ```
 
 ### Environment Variables (.env.local)
@@ -164,7 +167,7 @@ docker compose -f docker-compose.prod.yml up --build -d
 
 To stop the cluster:
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ---
@@ -172,17 +175,17 @@ docker-compose down
 ## 🎯 Usage Walkthrough
 
 1. **Authentication:** Open `http://localhost:3000` in your browser. Create an account via Email/Password or use the configured Google/GitHub OAuth links.
-2. **Knowledge Base:** Navigate to the "Knowledge Base" in the sidebar. Drag and drop any relevant `.pdf`, `.txt`, `.csv`, or `.md` reference files. The backend will automatically map vector embeddings to your workspace.
-3. **Launch a Task:** Go to the "New Task" screen. You can select an industry-standard template (e.g., Code Review, Market Analysis) or write your own research objective.
-4. **Watch it Execute:** Sit back and watch the DAG visualizer. The system will dynamically display the Planner spinning up, parallel streams from the Code/Research/Data agents executing, and the final Critic/Repair checks looping over any errors.
-5. **Analyze Costs:** Visit the "Cost Dashboard" to review charts displaying your exact Groq Token consumption, cache hit savings, and budget distribution.
+2. **Knowledge Base:** Upload `.pdf`, `.docx`, `.txt`, `.md`, `.csv`, or `.json` reference files. Text-based PDFs preserve page provenance; scanned/image-only PDFs require a separate OCR layer and are not claimed as indexed text.
+3. **Launch a Task:** On "New Task", choose All KB, selected documents, or No KB. The budget slider is read from the backend's configured maximum.
+4. **Watch it Execute:** The DAG visualizer displays the actual persisted dependency edges and live status events. Critic/Repair are orchestrator-controlled quality gates rather than planner-created duplicate steps.
+5. **Follow Up & Analyze:** Chat with completed reports using semantic report retrieval, inspect ARC Brain memory, and use Cost Dashboard for authoritative Groq token/cost analytics.
 
 ---
 
 ## 🛡 Security & Safety Guardrails
 - **Prompt Injection Telemetry:** Heuristic detection flags suspicious instructions; it is not treated as a security boundary.
 - **Tool Authorization:** Agents can execute only explicitly allowed tools, with permission-scope checks.
-- **Budget Enforcement:** Per-task budgets and account usage quotas are enforced from recorded LLM usage.
+- **Budget Enforcement:** Per-task and per-account reservations are enforced before concurrent LLM calls, then settled to actual provider usage.
 - **Python Isolation:** The API never runs untrusted Python locally. Configure `PYTHON_SANDBOX_URL` to a separately isolated service with CPU, memory, filesystem, network, and process limits.
 - **Refresh Sessions:** Refresh tokens are stored as hashes in MongoDB and sent to browsers only in HttpOnly cookies.
 
