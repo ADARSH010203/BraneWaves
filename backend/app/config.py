@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     MAX_RETRIES_PER_STEP: int = 3
     MAX_FILE_SIZE_MB: int = 50
     RATE_LIMIT_PER_MINUTE: int = 60
+    WORKER_HEARTBEAT_TTL_SECONDS: int = 20
+    OAUTH_EXCHANGE_TTL_SECONDS: int = 60
 
     # ── RAG ──────────────────────────────────────────────────────────────
     CHUNK_SIZE: int = 512
