@@ -688,6 +688,12 @@ class TaskOrchestrator:
             }
             await db.reports.insert_one(report_doc)
 
+            try:
+                from app.services.report_chat_service import index_report_for_chat
+                await index_report_for_chat(db, report_doc)
+            except Exception as exc:
+                logger.warning("Report chat indexing failed for task %s: %s", self.task_id, exc)
+
             await db.tasks.update_one(
                 {"_id": self.task_id},
                 {"$set": {"report_id": report_id, "result_summary": report.get("summary", "")}},
