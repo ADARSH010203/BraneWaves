@@ -160,6 +160,12 @@ async def oauth_login_user(db: AsyncIOMotorDatabase, email: str, name: str, prov
         user_id = user["_id"]
         if not user.get("is_active", True):
             raise ValueError("Account is deactivated")
+        existing_provider = user.get("provider", "local")
+        if existing_provider != provider:
+            raise ValueError(
+                f"An account with this email already exists using {existing_provider} login. "
+                "Sign in with the existing method before linking another provider."
+            )
 
     access_token = create_access_token(user_id, user.get("role", "user"))
     refresh_token = create_refresh_token(user_id)

@@ -47,6 +47,12 @@ async def task_stream(websocket: WebSocket, task_id: str):
     # Verify task belongs to user
     from app.database import get_db
     db = get_db()
+    user = await db.users.find_one({"_id": user_id}, {"is_active": 1})
+    if not user or not user.get("is_active", True):
+        await websocket.send_json({"error": "Account is unavailable"})
+        await websocket.close(code=4003)
+        return
+
     task = await db.tasks.find_one({"_id": task_id, "user_id": user_id})
     if not task:
         await websocket.send_json({"error": "Task not found"})
@@ -58,6 +64,15 @@ async def task_stream(websocket: WebSocket, task_id: str):
 
     # ── Subscribe to Redis pub/sub ───────────────────────────────────────
     redis = get_redis()
+    if redis is None:
+        await websocket.send_json({
+            "event": "stream_unavailable",
+            "task_id": task_id,
+            "message": "Live stream is temporarily unavailable; use HTTP polling.",
+        })
+        await websocket.close(code=1013)
+        return
+
     pubsub = redis.pubsub()
     channel = f"task:{task_id}"
     await pubsub.subscribe(channel)

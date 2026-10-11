@@ -160,6 +160,8 @@ async def provider_callback(provider: str, request: Request, db: DbDep):
 
     if provider == "google":
         user_info = token.get("userinfo") or {}
+        if user_info.get("email_verified") is not True:
+            raise HTTPException(status_code=400, detail="Google account email is not verified.")
         email = user_info.get("email")
         name = user_info.get("name", "Google User")
     elif provider == "github":
@@ -168,8 +170,10 @@ async def provider_callback(provider: str, request: Request, db: DbDep):
         name = profile.get("name") or profile.get("login") or "GitHub User"
         resp_emails = await client.get("user/emails", token=token)
         emails = resp_emails.json()
-        primary_email = next((e for e in emails if e.get("primary")), None)
-        email = primary_email.get("email") if primary_email else (emails[0].get("email") if emails else None)
+        verified_emails = [e for e in emails if e.get("verified") and e.get("email")]
+        primary_email = next((e for e in verified_emails if e.get("primary")), None)
+        selected_email = primary_email or (verified_emails[0] if verified_emails else None)
+        email = selected_email.get("email") if selected_email else None
     else:
         raise HTTPException(status_code=400, detail="Invalid provider")
 
@@ -178,6 +182,8 @@ async def provider_callback(provider: str, request: Request, db: DbDep):
 
     try:
         _user, tokens = await oauth_login_user(db, email, name, provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except Exception:
         raise HTTPException(status_code=500, detail="OAuth login failed")
 
