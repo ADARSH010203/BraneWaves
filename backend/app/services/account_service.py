@@ -45,6 +45,10 @@ async def delete_account(db: AsyncIOMotorDatabase, user_id: str) -> None:
         {"$set": {"is_active": False, "updated_at": datetime.now(timezone.utc)}},
     )
 
+    task_ids = await db.tasks.distinct("_id", {"user_id": user_id})
+    report_ids = await db.reports.distinct("_id", {"user_id": user_id})
+    run_ids = await db.agent_runs.distinct("_id", {"task_id": {"$in": task_ids}}) if task_ids else []
+
     files = await db.files.find({"user_id": user_id}, {"storage_path": 1}).to_list(length=None)
     for file_doc in files:
         storage_path = file_doc.get("storage_path")
@@ -56,12 +60,27 @@ async def delete_account(db: AsyncIOMotorDatabase, user_id: str) -> None:
             except OSError:
                 pass
 
-    collections = [
-        "sessions", "task_steps", "agent_runs", "agent_logs", "files", "chunks",
-        "citations", "reports", "report_chunks", "report_chats", "usage_cost",
-        "memory_nodes", "memory_edges", "tasks",
-    ]
-    for name in collections:
+    if task_ids:
+        await db.task_steps.delete_many({"task_id": {"$in": task_ids}})
+        await db.agent_runs.delete_many({"task_id": {"$in": task_ids}})
+        await db.citations.delete_many({"task_id": {"$in": task_ids}})
+    if run_ids:
+        await db.agent_logs.delete_many({"run_id": {"$in": run_ids}})
+    if report_ids:
+        await db.citations.delete_many({"report_id": {"$in": report_ids}})
+
+    for name in [
+        "sessions",
+        "files",
+        "chunks",
+        "reports",
+        "report_chunks",
+        "report_chats",
+        "usage_cost",
+        "memory_nodes",
+        "memory_edges",
+        "tasks",
+    ]:
         await db[name].delete_many({"user_id": user_id})
 
     await db.users.delete_one({"_id": user_id})
