@@ -97,6 +97,7 @@
   .agent-critic { @apply agent-badge bg-rose-500/10 text-rose-300 border-rose-500/20; }
   .agent-report { @apply agent-badge bg-indigo-500/10 text-indigo-300 border-indigo-500/20; }
   .agent-repair { @apply agent-badge bg-yellow-500/10 text-yellow-300 border-yellow-500/20; }
+  .agent-memory { @apply agent-badge bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/20; }
 
   /* ─── Scrollbar ────────────────────────── */
   .custom-scrollbar::-webkit-scrollbar { @apply w-1.5 h-1.5; }

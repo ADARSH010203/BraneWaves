@@ -271,15 +271,32 @@ class ApiClient {
     // ── Memory Graph (ARC Brain) ────────────────────────────────────
     async getMemoryGraph() {
         return this.request<{
-            nodes: Array<{ id: string; label: string; type: string; description: string; task_count: number; occurrence_count: number }>;
-            edges: Array<{ id: string; from: string; to: string; weight: number }>;
+            nodes: Array<{ id: string; label: string; type: string; description: string; task_count: number; occurrence_count: number; task_ids: string[] }>;
+            edges: Array<{ id: string; from: string; to: string; weight: number; relation: string; description: string; task_count: number; semantic: boolean }>;
             total_nodes: number;
             total_edges: number;
+            total_tasks: number;
         }>("/memory/graph");
     }
 
     async searchMemory(query: string) {
-        return this.request<{ results: Array<{ label: string; description: string; task_ids: string[]; score: number }> }>(
+        return this.request<{ results: Array<{
+            id: string;
+            label: string;
+            type: string;
+            description: string;
+            task_ids: string[];
+            occurrence_count: number;
+            score: number;
+            sources: Array<{
+                task_id: string;
+                title: string;
+                result_summary: string;
+                report_id?: string;
+                report_summary: string;
+                report_excerpt: string;
+            }>;
+        }> }>(
             `/memory/search?query=${encodeURIComponent(query)}`
         );
     }

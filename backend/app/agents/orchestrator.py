@@ -32,6 +32,11 @@ from app.models.agent_outputs import (
     ReportOutput,
     PlannerOutput,
 )
+from app.services.plan_validation import (
+    PlanValidationError,
+    ensure_knowledge_grounding_step,
+    validate_plan_steps,
+)
 
 logger = logging.getLogger("arc.orchestrator")
 settings = get_settings()
@@ -92,8 +97,94 @@ class TaskOrchestrator:
         task_doc = await db.tasks.find_one({"_id": self.task_id, "user_id": self.user_id})
         if not task_doc:
             raise ValueError(f"Task {self.task_id} not found")
-        if task_doc.get("status") == TaskStatus.CANCELLED.value:
-            return {"status": "cancelled", "task_id": self.task_id}
+
+        self._total_cost = float(task_doc.get("budget", {}).get("spent_usd", 0.0))
+        current_status = task_doc.get("status")
+        terminal_statuses = {
+            TaskStatus.COMPLETED.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.CANCELLED.value,
+        }
+        if current_status in terminal_statuses:
+            # A worker may crash after finishing a task but before removing the
+            # Redis processing-list payload. Recovered terminal tasks are no-ops.
+            await db.tasks.update_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"$set": {"budget.reserved_usd": 0.0}},
+            )
+            return {
+                "status": current_status,
+                "task_id": self.task_id,
+                "error": task_doc.get("error"),
+            }
+
+        if current_status in (TaskStatus.PLANNING.value, TaskStatus.RUNNING.value):
+            # Crash recovery. If a report was already persisted, preserve it and
+            # finish the idempotent memory post-processing instead of generating
+            # duplicate steps/report. Otherwise restart planning from a clean
+            # persisted step graph while retaining actual spend.
+            report_id = task_doc.get("report_id")
+            report_doc = None
+            if report_id:
+                report_doc = await db.reports.find_one(
+                    {"_id": report_id, "task_id": self.task_id, "user_id": self.user_id}
+                )
+            if report_doc:
+                await db.tasks.update_one(
+                    {"_id": self.task_id, "user_id": self.user_id},
+                    {"$set": {"budget.reserved_usd": 0.0}},
+                )
+                await self._run_memory_for_report(report_id, report_doc)
+                now = datetime.now(timezone.utc)
+                await db.tasks.update_one(
+                    {"_id": self.task_id, "user_id": self.user_id},
+                    {"$set": {
+                        "status": TaskStatus.COMPLETED.value,
+                        "completed_at": now,
+                        "updated_at": now,
+                        "error": None,
+                    }},
+                )
+                await self._emit_event("task_status", {
+                    "status": "completed",
+                    "recovered": True,
+                })
+                return {"status": "completed", "task_id": self.task_id, "recovered": True}
+
+            now = datetime.now(timezone.utc)
+            await db.agent_runs.update_many(
+                {
+                    "task_id": self.task_id,
+                    "status": AgentRunStatus.RUNNING.value,
+                },
+                {"$set": {
+                    "status": AgentRunStatus.ABORTED.value,
+                    "error": "Worker recovery restarted interrupted task",
+                    "completed_at": now,
+                }},
+            )
+            await db.task_steps.delete_many({"task_id": self.task_id})
+            await db.tasks.update_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"$set": {
+                    "status": TaskStatus.PENDING.value,
+                    "plan": None,
+                    "error": None,
+                    "budget.reserved_usd": 0.0,
+                    "budget.steps_used": 0,
+                    "updated_at": now,
+                }},
+            )
+            task_doc["status"] = TaskStatus.PENDING.value
+            task_doc["plan"] = None
+        else:
+            # No LLM call can still be alive when a queued pending task starts.
+            # Clear any stale reservation left by an interrupted previous process.
+            await db.tasks.update_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"$set": {"budget.reserved_usd": 0.0}},
+            )
+
         try:
             await self._check_cancellation()
         except TaskCancelledException:
@@ -128,17 +219,38 @@ class TaskOrchestrator:
             await self._fail_task(str(e))
             return {"error": str(e)}
 
-        # Save plan and create steps
-        # Final report generation is owned by Phase 3; ignore legacy planner
-        # report steps to prevent duplicate report execution/cost.
-        steps = [
-            step for step in plan.get("steps", [])
-            if step.get("type") != StepType.REPORT.value
-        ]
+        # Validate the Planner DAG before persisting or executing anything.
+        # Critic, Repair, and Report are orchestrator-owned and can never appear
+        # as planner-generated executable steps.
+        steps = plan.get("steps", [])
         task_budget = task_doc.get("budget", {})
         max_steps = int(task_budget.get("max_steps", settings.MAX_STEPS_PER_TASK))
-        if len(steps) > max_steps:
-            error = f"Planner produced {len(steps)} steps, exceeding task limit of {max_steps}"
+
+        knowledge_available = False
+        if task_doc.get("use_knowledge_base", True):
+            knowledge_query: dict[str, Any] = {
+                "user_id": self.user_id,
+                "task_id": "KNOWLEDGE_BASE",
+                "is_indexed": True,
+            }
+            selected_file_ids = task_doc.get("selected_file_ids", [])
+            if selected_file_ids:
+                knowledge_query["_id"] = {"$in": selected_file_ids}
+            knowledge_available = bool(
+                await db.files.find_one(knowledge_query, {"_id": 1})
+            )
+
+        steps, grounding_injected = ensure_knowledge_grounding_step(
+            steps,
+            knowledge_available=knowledge_available,
+        )
+        plan["steps"] = steps
+        plan["knowledge_grounding_injected"] = grounding_injected
+
+        try:
+            validate_plan_steps(steps, max_steps)
+        except PlanValidationError as exc:
+            error = str(exc)
             await self._fail_task(error)
             return {"error": error}
         await db.tasks.update_one(
@@ -170,10 +282,11 @@ class TaskOrchestrator:
                 "created_at": datetime.now(timezone.utc),
             })
 
-        # BUG-01 FIX: Resolve planner's string IDs to actual UUIDs
+        # Resolve validated planner IDs to persisted UUIDs. The validator
+        # guarantees every dependency exists, so nothing is silently dropped.
         idx_to_uuid = {s["id"]: s["_id"] for s in step_docs}
         for s in step_docs:
-            s["depends_on"] = [idx_to_uuid[d] for d in s["depends_on"] if d in idx_to_uuid]
+            s["depends_on"] = [idx_to_uuid[d] for d in s["depends_on"]]
 
         if step_docs:
             await db.task_steps.insert_many(step_docs)
@@ -370,32 +483,38 @@ class TaskOrchestrator:
             output = await agent.run(input_data)
             confidence = output.get("confidence", 0.5)
 
-            # Run critic on output
-            if agent_type != AgentType.CRITIC.value and agent_type != AgentType.REPAIR.value:
+            # Every executable step receives exactly one automatic Critic pass.
+            # Critic.confidence means confidence in the critique itself; output
+            # quality is represented by quality_score (0-5).
+            if agent_type not in (AgentType.CRITIC.value, AgentType.REPAIR.value):
                 critic_result = await self._run_critic(sid, output)
-                confidence = critic_result.get("confidence", confidence)
+                critic_verdict = critic_result.get("verdict", "pass")
+                quality_score = float(critic_result.get("quality_score", 2.5))
+                quality_confidence = max(0.0, min(1.0, quality_score / 5.0))
+                confidence = min(float(confidence), quality_confidence)
                 output["critic_feedback"] = critic_result
 
-                # Trigger repair if critic verdict is bad
-                critic_verdict = critic_result.get("verdict", "pass")
-                if critic_verdict in ("fail", "needs_revision") and confidence < settings.CRITIC_CONFIDENCE_THRESHOLD:
+                if critic_verdict in ("fail", "needs_revision"):
                     logger.warning(
-                        "Critic flagged step %s as '%s' (confidence=%.2f). Attempting repair.",
-                        sid, critic_verdict, confidence
+                        "Critic rejected step %s as '%s' (quality=%.2f/5). Attempting repair.",
+                        sid, critic_verdict, quality_score,
                     )
                     await self._emit_event("step_status", {
                         "step_id": sid,
                         "status": "critic_repair",
                         "verdict": critic_verdict,
-                        "confidence": confidence,
+                        "quality_score": quality_score,
                     })
-                    repair_error = critic_result.get("feedback", f"Critic verdict: {critic_verdict}")
+                    repair_error = critic_result.get("feedback") or f"Critic verdict: {critic_verdict}"
                     repaired = await self._attempt_repair(step, repair_error)
-                    if repaired:
-                        repaired_step = await db.task_steps.find_one({"_id": sid})
-                        if repaired_step and repaired_step.get("output_data"):
-                            output = repaired_step["output_data"]
-                            confidence = 0.6
+                    if not repaired:
+                        raise RuntimeError(
+                            f"Critic rejected step output and repair failed: {repair_error}"
+                        )
+                    repaired_step = await db.task_steps.find_one({"_id": sid})
+                    if repaired_step and repaired_step.get("output_data"):
+                        output = repaired_step["output_data"]
+                        confidence = float(output.get("confidence", quality_confidence))
 
             await agent.complete_run(output, confidence=confidence)
             self._total_cost += agent._total_cost
@@ -452,7 +571,8 @@ class TaskOrchestrator:
         """Attempt to repair a failed step using RepairAgent."""
         db = get_db()
         sid = step["_id"]
-        retries = step.get("retries", 0)
+        current_step = await db.task_steps.find_one({"_id": sid}, {"retries": 1})
+        retries = int((current_step or {}).get("retries", step.get("retries", 0)))
 
         if retries >= settings.MAX_RETRIES_PER_STEP:
             return False
@@ -574,35 +694,58 @@ class TaskOrchestrator:
             )
             await self._emit_event("report_generated", {"report_id": report_id})
 
-            # Trigger MemoryAgent to extract and store knowledge graph nodes
-            try:
-                from app.agents.memory import MemoryAgent
-                memory_agent = MemoryAgent(
-                    task_id=self.task_id,
-                    step_id="memory",
-                    user_id=self.user_id,
-                    budget_usd=0.05,
-                )
-                memory_input = {
-                    "report_content": report.get("content", ""),
-                    "report_summary": report.get("summary", ""),
-                    "task_id": self.task_id,
-                }
-                await memory_agent.start_run(memory_input)
-                memory_result = await memory_agent.run(memory_input)
-                await memory_agent.complete_run(memory_result)
-                self._total_cost += memory_agent._total_cost
-                logger.info("MemoryAgent completed: %s", memory_result)
-            except Exception as e:
-                import traceback
-                logger.error("MemoryAgent failed (non-critical) with exception: %s\n%s", e, traceback.format_exc())
-
+            await self._run_memory_for_report(report_id, report_doc)
             return True
 
         except Exception as e:
             await report_agent.complete_run({}, status=AgentRunStatus.FAILED, error=str(e))
             logger.error("Report generation failed for task %s: %s", self.task_id, e)
             return False
+
+    async def _run_memory_for_report(
+        self,
+        report_id: str,
+        report: dict[str, Any],
+    ) -> None:
+        """Run idempotent non-critical memory extraction for a persisted report."""
+        db = get_db()
+        existing = await db.agent_runs.find_one(
+            {
+                "task_id": self.task_id,
+                "step_id": "memory",
+                "status": AgentRunStatus.COMPLETED.value,
+            },
+            {"_id": 1},
+        )
+        if existing:
+            return
+
+        try:
+            from app.agents.memory import MemoryAgent
+
+            memory_agent = MemoryAgent(
+                task_id=self.task_id,
+                step_id="memory",
+                user_id=self.user_id,
+                budget_usd=0.05,
+            )
+            memory_input = {
+                "report_content": report.get("content", ""),
+                "report_summary": report.get("summary", ""),
+                "task_id": self.task_id,
+                "report_id": report_id,
+            }
+            await memory_agent.start_run(memory_input)
+            memory_result = await memory_agent.run(memory_input)
+            await memory_agent.complete_run(memory_result)
+            self._total_cost += memory_agent._total_cost
+            logger.info("MemoryAgent completed: %s", memory_result)
+        except Exception as exc:
+            logger.exception(
+                "MemoryAgent failed (non-critical) for task %s: %s",
+                self.task_id,
+                exc,
+            )
 
     async def _check_cancellation(self) -> None:
         """Check Redis for cancellation flag. Raises TaskCancelledException if set."""

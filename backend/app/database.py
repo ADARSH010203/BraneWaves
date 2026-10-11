@@ -149,5 +149,8 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.memory_nodes.create_index([("user_id", 1), ("occurrence_count", -1)])
     await db.memory_edges.create_index([("user_id", 1), ("from_node_id", 1)])
     await db.memory_edges.create_index([("user_id", 1), ("to_node_id", 1)])
+    await db.memory_edges.create_index(
+        [("user_id", 1), ("from_node_id", 1), ("to_node_id", 1), ("relation", 1)]
+    )
 
     logger.info("MongoDB indexes ensured")
