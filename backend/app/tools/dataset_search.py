@@ -19,13 +19,13 @@ class DatasetSearchInput(ToolInput):
 
 
 class DatasetSearchTool(BaseTool):
-    """Searches for datasets using public APIs (HuggingFace, Kaggle)."""
+    """Searches Hugging Face's public dataset catalog."""
 
     name = "dataset_search"
-    description = "Search for datasets related to a topic"
+    description = "Search the Hugging Face public dataset catalog for datasets related to a topic"
     input_schema = DatasetSearchInput
     timeout_seconds = 30
-    cost_estimate_usd = 0.0005
+    cost_estimate_usd = 0.0
     permission_scope = "basic"
 
     async def execute(self, params: dict[str, Any], user_id: str) -> dict[str, Any]:
