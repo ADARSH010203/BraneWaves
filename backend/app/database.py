@@ -114,10 +114,12 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.task_steps.create_index([("task_id", 1), ("order", 1)])
 
     # Agent Runs
+    await db.agent_runs.create_index("user_id")
     await db.agent_runs.create_index("task_id")
     await db.agent_runs.create_index([("task_id", 1), ("step_id", 1)])
 
     # Agent Logs
+    await db.agent_logs.create_index("user_id")
     await db.agent_logs.create_index("run_id")
     await db.agent_logs.create_index("timestamp")
 
