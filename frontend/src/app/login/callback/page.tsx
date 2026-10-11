@@ -12,20 +12,20 @@ export default function AuthCallbackPage() {
         let active = true;
 
         const finishOAuth = async () => {
-            const hash = window.location.hash.substring(1);
-            const params = new URLSearchParams(hash);
-            const accessToken = params.get("access_token");
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get("code");
 
-            // Remove the access-token fragment from browser history immediately.
+            // Remove the short-lived exchange code from browser history immediately.
             window.history.replaceState({}, document.title, window.location.pathname);
 
-            if (!accessToken) {
+            if (!code) {
                 router.replace("/login?error=oauth_failed");
                 return;
             }
 
             try {
-                setTokens(accessToken);
+                const exchange = await api.exchangeOAuthCode(code);
+                setTokens(exchange.access_token);
                 const user = await api.getMe();
                 if (!active) return;
                 setUser(user);
