@@ -42,12 +42,13 @@
   },
   {
     "task_type": "code",
-    "title": "Create a React hook for debouncing",
-    "description": "Write a custom React hook called useDebounce that takes a value and a delay.",
+    "title": "Analyze numeric values with Python",
+    "description": "Write Python code that takes a list of numbers, removes null values, and returns count, mean, minimum, and maximum.",
     "rubric": [
-      "Must include valid TypeScript/JavaScript code for a React hook.",
-      "Must use useEffect and setTimeout.",
-      "Must properly clear the timeout on unmount or value change."
+      "Must include valid Python code.",
+      "Must correctly ignore or remove null values.",
+      "Must calculate count, mean, minimum, and maximum.",
+      "Must use the isolated python_sandbox tool when execution is configured."
     ]
   }
 ]
