@@ -49,6 +49,24 @@ async def create_task(db: AsyncIOMotorDatabase, user_id: str, data: TaskCreate) 
         max_steps=effective_steps,
     )
 
+    selected_file_ids = list(dict.fromkeys(data.selected_file_ids))
+    if not data.use_knowledge_base and selected_file_ids:
+        raise ValueError("Selected files require knowledge-base access to be enabled")
+
+    if selected_file_ids:
+        selected_docs = await db.files.find(
+            {
+                "_id": {"$in": selected_file_ids},
+                "user_id": user_id,
+                "task_id": "KNOWLEDGE_BASE",
+                "is_indexed": True,
+            },
+            {"_id": 1},
+        ).to_list(length=len(selected_file_ids))
+        found_ids = {str(doc["_id"]) for doc in selected_docs}
+        if found_ids != set(selected_file_ids):
+            raise ValueError("One or more selected knowledge-base files are unavailable or not indexed")
+
     task_doc = {
         "_id": task_id,
         "user_id": user_id,
@@ -57,6 +75,8 @@ async def create_task(db: AsyncIOMotorDatabase, user_id: str, data: TaskCreate) 
         "status": TaskStatus.PENDING.value,
         "budget": budget.model_dump(),
         "tags": data.tags,
+        "use_knowledge_base": data.use_knowledge_base,
+        "selected_file_ids": selected_file_ids,
         "plan": None,
         "result_summary": None,
         "report_id": None,
@@ -109,6 +129,8 @@ async def create_task(db: AsyncIOMotorDatabase, user_id: str, data: TaskCreate) 
         status=TaskStatus.PENDING,
         budget=budget,
         tags=data.tags,
+        use_knowledge_base=data.use_knowledge_base,
+        selected_file_ids=selected_file_ids,
         created_at=now,
         updated_at=now,
     )
@@ -271,6 +293,8 @@ def _doc_to_response(doc: dict) -> TaskResponse:
         status=doc["status"],
         budget=TaskBudget(**doc.get("budget", {})),
         tags=doc.get("tags", []),
+        use_knowledge_base=doc.get("use_knowledge_base", True),
+        selected_file_ids=doc.get("selected_file_ids", []),
         plan=doc.get("plan"),
         result_summary=doc.get("result_summary"),
         report_id=doc.get("report_id"),

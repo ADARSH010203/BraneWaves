@@ -342,12 +342,20 @@ class TaskOrchestrator:
                 if dep_step and dep_step.get("output_data"):
                     dep_outputs[dep_id] = dep_step["output_data"]
 
+        task_scope = await db.tasks.find_one(
+            {"_id": self.task_id, "user_id": self.user_id},
+            {"description": 1, "use_knowledge_base": 1, "selected_file_ids": 1},
+        ) or {}
+
         input_data = {
             **(step.get("input_data") or {}),
             "step_title": step.get("title", ""),
             "step_description": step.get("description", ""),
+            "task_description": task_scope.get("description", ""),
             "dependency_outputs": dep_outputs,
             "task_id": self.task_id,
+            "use_knowledge_base": task_scope.get("use_knowledge_base", True),
+            "selected_file_ids": task_scope.get("selected_file_ids", []),
         }
 
         agent = agent_cls(

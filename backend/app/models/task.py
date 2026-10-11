@@ -48,6 +48,8 @@ class TaskCreate(BaseModel):
     budget_usd: Optional[float] = Field(default=None, ge=0.01, le=100.0)
     max_steps: Optional[int] = Field(default=None, ge=1, le=200)
     tags: list[str] = Field(default_factory=list)
+    use_knowledge_base: bool = True
+    selected_file_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
 class TaskBudget(BaseModel):
@@ -67,6 +69,8 @@ class TaskDoc(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     budget: TaskBudget = Field(default_factory=TaskBudget)
     tags: list[str] = Field(default_factory=list)
+    use_knowledge_base: bool = True
+    selected_file_ids: list[str] = Field(default_factory=list)
     plan: Optional[dict[str, Any]] = None  # Agent-generated execution plan
     result_summary: Optional[str] = None
     report_id: Optional[str] = None
@@ -87,6 +91,8 @@ class TaskResponse(BaseModel):
     status: TaskStatus
     budget: TaskBudget
     tags: list[str]
+    use_knowledge_base: bool = True
+    selected_file_ids: list[str] = Field(default_factory=list)
     plan: Optional[dict[str, Any]] = None
     result_summary: Optional[str] = None
     report_id: Optional[str] = None

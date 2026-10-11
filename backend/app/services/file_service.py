@@ -16,7 +16,7 @@ from app.config import get_settings
 from app.models.file import FileDoc, FileResponse, FileType, FileUploadResponse
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import store_chunks_with_embeddings
-from app.rag.ingestion import extract_text
+from app.rag.ingestion import extract_document_segments
 
 logger = logging.getLogger("arc.services.file")
 settings = get_settings()
@@ -85,9 +85,25 @@ async def upload_file(
     with open(storage_path, "wb") as f:
         f.write(file_bytes)
 
-    # Extract text and index
-    text = await extract_text(file_bytes, content_type, filename)
-    chunks = chunk_text(text, metadata={"file_id": file_id, "filename": filename})
+    # Extract text with source provenance and index it. PDF pages retain
+    # page_number metadata so local citations can point back to the source page.
+    segments = await extract_document_segments(file_bytes, content_type, filename)
+    chunks = []
+    for segment in segments:
+        segment_meta = {
+            "file_id": file_id,
+            "filename": filename,
+            "original_name": filename,
+            "page_number": segment.get("page_number"),
+            "segment_index": segment.get("segment_index"),
+        }
+        chunks.extend(chunk_text(segment.get("text", ""), metadata=segment_meta))
+
+    # Re-number chunks across the full document rather than per page/segment.
+    for index, chunk in enumerate(chunks):
+        chunk["index"] = index
+        chunk.setdefault("metadata", {})["chunk_index"] = index
+        chunk["metadata"]["total_chunks"] = len(chunks)
 
     chunk_ids = []
     if chunks:

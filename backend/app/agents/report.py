@@ -119,22 +119,50 @@ Write a complete, professional report as JSON matching the ReportOutput schema."
         total_count = len(citations)
 
         for cit in citations:
-            url = cit.get("url")
+            url = cit.get("url") or ""
             excerpt = cit.get("excerpt")
+            citation_type = cit.get("type", "web")
+            file_id = cit.get("file_id")
+            page_number = cit.get("page_number")
+            chunk_id = cit.get("chunk_id")
             is_verified = False
             relevance = 0.5
-            
-            if url:
+            verification_note = None
+
+            is_local = citation_type == "file" or url.startswith("local://file/")
+            if is_local:
+                if not file_id and url.startswith("local://file/"):
+                    file_id = url[len("local://file/"):].split("#", 1)[0]
+                file_doc = None
+                if file_id:
+                    file_doc = await db.files.find_one(
+                        {"_id": file_id, "user_id": self.user_id},
+                        {"_id": 1, "original_name": 1},
+                    )
+                chunk_doc = None
+                if file_doc and chunk_id:
+                    chunk_doc = await db.chunks.find_one(
+                        {"_id": chunk_id, "file_id": file_id, "user_id": self.user_id},
+                        {"_id": 1},
+                    )
+                is_verified = bool(file_doc and (not chunk_id or chunk_doc))
+                relevance = 1.0 if is_verified else 0.0
+                verification_note = "Verified against local RAG source" if is_verified else "Local RAG source not found"
+                if is_verified:
+                    verified_count += 1
+            elif url:
                 try:
-                    verify_result = await self.execute_tool("citation_verify", {
-                        "url": url,
-                        "expected_content": excerpt
-                    })
+                    verify_result = await self.execute_tool(
+                        "citation_verify",
+                        {"url": url, "expected_content": excerpt},
+                        allowed_tools={"citation_verify"},
+                    )
                     score = verify_result.get("verification_score", 0.0)
                     if score >= 0.6:
                         is_verified = True
                         verified_count += 1
                     relevance = score
+                    verification_note = verify_result.get("verification_note")
                 except Exception as e:
                     import logging
                     logging.getLogger("arc.agents.report").warning(f"Citation verification failed for {url}: {e}")
@@ -144,13 +172,17 @@ Write a complete, professional report as JSON matching the ReportOutput schema."
                 "_id": cit_id,
                 "report_id": report_id,
                 "task_id": self.task_id,
-                "citation_type": cit.get("type", "web"),
+                "citation_type": citation_type,
                 "title": cit.get("title", "Unknown"),
                 "url": url,
                 "authors": cit.get("authors", []),
                 "excerpt": excerpt,
+                "file_id": file_id,
+                "page_number": page_number,
+                "chunk_id": chunk_id,
                 "relevance_score": relevance,
                 "verified": is_verified,
+                "verification_note": verification_note,
                 "created_at": datetime.now(timezone.utc),
             }
             await db.citations.insert_one(cit_doc)
