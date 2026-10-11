@@ -5,7 +5,10 @@ Provider-backed web search with normalized results and resilient fallback routin
 from __future__ import annotations
 
 import logging
+from html import unescape
+from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 from pydantic import Field
@@ -157,6 +160,104 @@ async def _search_serper(
     ]
 
 
+class _DuckDuckGoHTMLParser(HTMLParser):
+    """Minimal parser for DuckDuckGo HTML result cards."""
+
+    def __init__(self, limit: int):
+        super().__init__(convert_charrefs=True)
+        self.limit = limit
+        self.results: list[dict[str, str]] = []
+        self._current: dict[str, str] | None = None
+        self._capture_title = False
+        self._capture_snippet = False
+
+    @staticmethod
+    def _classes(attrs: list[tuple[str, str | None]]) -> set[str]:
+        value = dict(attrs).get("class") or ""
+        return set(value.split())
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if len(self.results) >= self.limit:
+            return
+        classes = self._classes(attrs)
+        attr_map = dict(attrs)
+        if tag == "a" and "result__a" in classes:
+            self._current = {
+                "title": "",
+                "url": _decode_duckduckgo_url(attr_map.get("href") or ""),
+                "snippet": "",
+                "source": "DuckDuckGo",
+            }
+            self._capture_title = True
+        elif self._current is not None and "result__snippet" in classes:
+            self._capture_snippet = True
+
+    def handle_data(self, data: str) -> None:
+        if self._current is None:
+            return
+        if self._capture_title:
+            self._current["title"] += data
+        elif self._capture_snippet:
+            self._current["snippet"] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._current is None:
+            return
+        if tag == "a" and self._capture_title:
+            self._capture_title = False
+            if self._current["url"]:
+                self.results.append(self._current)
+            self._current = None
+        elif self._capture_snippet and tag in {"a", "div", "span"}:
+            self._capture_snippet = False
+
+
+def _decode_duckduckgo_url(url: str) -> str:
+    value = unescape(url)
+    if value.startswith("//"):
+        value = "https:" + value
+    try:
+        parsed = urlparse(value)
+        if "duckduckgo.com" in parsed.netloc and parsed.path.startswith("/l/"):
+            target = parse_qs(parsed.query).get("uddg", [])
+            if target:
+                return unquote(target[0])
+    except Exception:
+        pass
+    return value
+
+
+async def _search_duckduckgo_html(
+    client: httpx.AsyncClient,
+    query: str,
+    num_results: int,
+    language: str,
+) -> list[dict[str, str]]:
+    response = await client.get(
+        "https://html.duckduckgo.com/html/",
+        params={"q": query, "kl": language},
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (compatible; ARCResearchBot/1.0; "
+                "+https://github.com/ADARSH010203/BraneWaves)"
+            )
+        },
+    )
+    response.raise_for_status()
+    parser = _DuckDuckGoHTMLParser(num_results)
+    parser.feed(response.text)
+    return [
+        _normalized(
+            title=item.get("title", ""),
+            url=item.get("url", ""),
+            snippet=item.get("snippet", ""),
+            source="DuckDuckGo",
+        )
+        for item in parser.results[:num_results]
+        if item.get("url")
+    ]
+
+
 async def _search_duckduckgo(
     client: httpx.AsyncClient,
     query: str,
@@ -217,6 +318,11 @@ async def _search_duckduckgo(
                     source="DuckDuckGo",
                 )
             )
+
+    if not results:
+        results = await _search_duckduckgo_html(
+            client, query, num_results, language
+        )
     return results[:num_results]
 
 
