@@ -1,4 +1,3 @@
-# Worker Dockerfile (shares backend codebase)
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -7,14 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-
-# Install CPU-only PyTorch first (much smaller ~200MB vs 1GB GPU version)
+COPY requirements.lock .
 RUN pip install --no-cache-dir --default-timeout=300 \
-    torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining dependencies
-RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.lock
 
 COPY . .
 
