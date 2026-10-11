@@ -45,6 +45,22 @@ async def delete_account(db: AsyncIOMotorDatabase, user_id: str) -> None:
         {"$set": {"is_active": False, "updated_at": datetime.now(timezone.utc)}},
     )
 
+    # Signal in-flight orchestrators before removing their backing records.
+    # They re-check task status between execution phases/batches.
+    await db.tasks.update_many(
+        {
+            "user_id": user_id,
+            "status": {"$in": ["pending", "planning", "running"]},
+        },
+        {
+            "$set": {
+                "status": "cancelled",
+                "error": "Account deleted",
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
     task_ids = await db.tasks.distinct("_id", {"user_id": user_id})
     report_ids = await db.reports.distinct("_id", {"user_id": user_id})
     run_ids = await db.agent_runs.distinct("_id", {"task_id": {"$in": task_ids}}) if task_ids else []
