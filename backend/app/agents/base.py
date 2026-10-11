@@ -243,6 +243,7 @@ class BaseAgent(ABC):
         db = get_db()
         doc = {
             "_id": self.run_id,
+            "user_id": self.user_id,
             "task_id": self.task_id,
             "step_id": self.step_id,
             "agent_type": self.agent_type.value,
@@ -320,6 +321,7 @@ class BaseAgent(ABC):
         db = get_db()
         doc = {
             "_id": str(uuid.uuid4()),
+            "user_id": self.user_id,
             "run_id": self.run_id,
             "task_id": self.task_id,
             "agent_type": self.agent_type.value,
