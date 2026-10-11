@@ -7,12 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-
-# Keep both API and worker on the same CPU-only PyTorch strategy.
+COPY requirements.lock .
 RUN pip install --no-cache-dir --default-timeout=300 \
-    torch --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir --default-timeout=300 -r requirements.txt
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.lock
 
 COPY . .
 
