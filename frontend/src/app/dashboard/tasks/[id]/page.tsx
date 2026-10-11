@@ -27,7 +27,7 @@ export default function TaskDetailPage() {
     fetchTask, fetchSteps, fetchResult,
     loading, cancelTask,
   } = useTask();
-  const { events, connected, latestEvent, streamedReport } = useWebSocket(
+  const { events, connected, latestEvent } = useWebSocket(
     currentTask?.status === "running" || currentTask?.status === "planning" ? taskId : null
   );
 
@@ -326,7 +326,7 @@ export default function TaskDetailPage() {
           {activeTab === "report" && (
             <div>
               {/* Final Executive Report */}
-              {(result?.report || streamedReport) ? (
+              {result?.report ? (
                 <motion.div initial={{opacity:0,y:30}} animate={{opacity:1,y:0}} transition={{delay:0.3, duration:0.6}} className="glass-card mt-8 p-8 md:p-12 border-t-4 border-t-purple-500">
           <div className="flex items-center justify-between gap-3 mb-8 pb-6 border-b border-white/10">
             <div className="flex items-center gap-3">
@@ -335,7 +335,7 @@ export default function TaskDetailPage() {
               </div>
               <div>
                 <h2 className="text-2xl font-black text-white tracking-tight">Executive Synthesis Report</h2>
-                <p className="text-sm font-mono text-purple-300 mt-1">Status: {result?.report ? "Verified via Critic Agent" : "Generating Live..."}</p>
+                <p className="text-sm font-mono text-purple-300 mt-1">Status: Final report generated from critiqued workflow steps</p>
               </div>
             </div>
 
@@ -416,11 +416,9 @@ export default function TaskDetailPage() {
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight]}
             >
-              {result?.report?.content || streamedReport}
+              {result.report.content}
             </ReactMarkdown>
-            {!result?.report && (
-              <span className="inline-block w-2 h-4 bg-brand-400 animate-pulse ml-1 align-middle" />
-            )}
+
           </div>
           
           {result?.citations && result.citations.length > 0 && (
