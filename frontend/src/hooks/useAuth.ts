@@ -1,19 +1,58 @@
-/* ─── ARC Platform — useAuth Hook ─────────────────────────────────── */
+/* ─── ARC Platform — authoritative authentication hook ────────────── */
 "use client";
+
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { User } from "@/types";
 import { api } from "@/lib/api";
-import { clearTokens, getUser, isAuthenticated, setTokens, setUser } from "@/lib/auth";
+import { clearTokens, setTokens, setUser } from "@/lib/auth";
 
 export function useAuth() {
     const [user, setCurrentUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const router = useRouter();
 
+    const refreshUser = useCallback(async () => {
+        try {
+            const authoritative = await api.getMe();
+            setUser(authoritative);
+            setCurrentUser(authoritative);
+            return authoritative;
+        } catch {
+            clearTokens();
+            setCurrentUser(null);
+            return null;
+        }
+    }, []);
+
     useEffect(() => {
-        setCurrentUser(getUser());
-        setLoading(false);
+        let active = true;
+        const bootstrap = async () => {
+            try {
+                const authoritative = await api.getMe();
+                if (!active) return;
+                setUser(authoritative);
+                setCurrentUser(authoritative);
+            } catch {
+                if (!active) return;
+                clearTokens();
+                setCurrentUser(null);
+            } finally {
+                if (active) setLoading(false);
+            }
+        };
+
+        const syncUser = (event: Event) => {
+            const detail = (event as CustomEvent<User>).detail;
+            if (detail) setCurrentUser(detail);
+        };
+
+        window.addEventListener("arc-user-updated", syncUser);
+        void bootstrap();
+        return () => {
+            active = false;
+            window.removeEventListener("arc-user-updated", syncUser);
+        };
     }, []);
 
     const login = useCallback(async (email: string, password: string) => {
@@ -32,6 +71,20 @@ export function useAuth() {
         router.push("/dashboard");
     }, [router]);
 
+    const updateProfile = useCallback(async (name: string) => {
+        const updated = await api.updateMe(name);
+        setUser(updated);
+        setCurrentUser(updated);
+        return updated;
+    }, []);
+
+    const deleteAccount = useCallback(async () => {
+        await api.deleteMe();
+        clearTokens();
+        setCurrentUser(null);
+        router.push("/");
+    }, [router]);
+
     const logout = useCallback(async () => {
         await api.logout();
         clearTokens();
@@ -39,5 +92,15 @@ export function useAuth() {
         router.push("/");
     }, [router]);
 
-    return { user, loading, login, register, logout, isAuthenticated: isAuthenticated() };
+    return {
+        user,
+        loading,
+        login,
+        register,
+        logout,
+        refreshUser,
+        updateProfile,
+        deleteAccount,
+        isAuthenticated: !!user,
+    };
 }
