@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.base import BaseAgent
+from app.config import get_settings
 from app.models.agent import AgentType
 from app.models.agent_outputs import CodeOutput
 from app.agents.context_utils import compress_dependency_output
@@ -32,6 +33,11 @@ Rules:
 - Include error handling"""
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        if not get_settings().PYTHON_SANDBOX_URL:
+            raise RuntimeError(
+                "Python sandbox is not configured; CodeAgent execution is disabled."
+            )
+
         description = input_data.get("step_description") or input_data.get("description") or input_data.get("task_description") or input_data.get("query") or ""
         dep_outputs = input_data.get("dependency_outputs", {})
 
