@@ -67,11 +67,16 @@ Affected pull requests: **1**.
 
 ## Verification
 
-The pull request for this branch runs:
+The current stacked remediation pull requests run:
 
-- Python 3.11 + backend pytest suite with MongoDB and Redis services.
-- Node 20 + frontend `npm install` and `npm run build`.
+- Python 3.11 + MongoDB/Redis + the frozen `backend/requirements.lock` dependency set + the full backend pytest suite.
+- Node 20 + committed `frontend/package-lock.json` + `npm ci` + the Next.js production build.
+- A separate manual **Live Integration Smoke** workflow is available for real Groq, web-search, paper-search, and dataset-provider checks; it is intentionally not required for deterministic PR CI.
 
-The repository's execution environment used for this audit could not directly
-clone GitHub or reach npm, so GitHub Actions is the authoritative build/test
-verification for these changes.
+Phase 1-4 also added account/session hardening, scoped document-grounded RAG,
+validated DAG execution, semantic ARC Brain memory, authoritative dashboard
+analytics/settings, persistent semantic report chat, frozen dependency locks,
+and production readiness healthchecks.
+
+GitHub Actions remains the authoritative reproducible build/test verification for
+the repository.
