@@ -519,13 +519,25 @@ class TaskOrchestrator:
             await agent.complete_run(output, confidence=confidence)
             self._total_cost += agent._total_cost
 
+            usage_rows = await db.usage_cost.aggregate([
+                {"$match": {"task_id": self.task_id, "step_id": sid}},
+                {"$group": {
+                    "_id": None,
+                    "cost": {"$sum": "$cost_usd"},
+                    "tokens": {"$sum": "$tokens_total"},
+                }},
+            ]).to_list(length=1)
+            step_cost = float(usage_rows[0]["cost"]) if usage_rows else agent._total_cost
+            step_tokens = int(usage_rows[0]["tokens"]) if usage_rows else agent._total_tokens
+
             await db.task_steps.update_one(
                 {"_id": sid},
                 {"$set": {
                     "status": StepStatus.COMPLETED.value,
                     "output_data": output,
                     "confidence": confidence,
-                    "cost_usd": agent._total_cost,
+                    "cost_usd": step_cost,
+                    "tokens": step_tokens,
                     "completed_at": datetime.now(timezone.utc),
                 }},
             )
@@ -540,7 +552,8 @@ class TaskOrchestrator:
                 "step_id": sid,
                 "status": "completed",
                 "confidence": confidence,
-                "cost_usd": agent._total_cost,
+                "cost_usd": step_cost,
+                "tokens": step_tokens,
             })
 
             return output
