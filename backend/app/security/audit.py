@@ -58,6 +58,11 @@ async def audit_log(
         success: Whether the action succeeded
     """
     db = get_db()
+    if user_id:
+        user_exists = await db.users.find_one({"_id": user_id}, {"_id": 1})
+        if not user_exists:
+            return
+
     doc = {
         "action": action,
         "user_id": user_id,
