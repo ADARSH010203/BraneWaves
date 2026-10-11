@@ -73,6 +73,9 @@ class BaseAgent(ABC):
         self.budget_usd = budget_usd
         self._total_cost = 0.0
         self._total_tokens = 0
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._last_model = settings.GROQ_MODEL
         self._client = None
 
     # ── Abstract ─────────────────────────────────────────────────────────
@@ -140,6 +143,9 @@ class BaseAgent(ABC):
 
         self._total_cost += cost_usd
         self._total_tokens += total_tokens
+        self._prompt_tokens += prompt_tokens
+        self._completion_tokens += completion_tokens
+        self._last_model = used_model
 
         # Metrics
         inc("tokens.total", total_tokens)
@@ -230,6 +236,11 @@ class BaseAgent(ABC):
             granted_scopes=granted_scopes,
         )
 
+        db = get_db()
+        await db.agent_runs.update_one(
+            {"_id": self.run_id},
+            {"$addToSet": {"tools_called": tool_name}},
+        )
         await self._log(
             event="tool_call",
             message=f"Tool executed: {tool_name}",
@@ -274,8 +285,11 @@ class BaseAgent(ABC):
             "$set": {
                 "status": status.value,
                 "output_data": output_data,
+                "tokens_prompt": self._prompt_tokens,
+                "tokens_completion": self._completion_tokens,
                 "tokens_total": self._total_tokens,
                 "cost_usd": self._total_cost,
+                "model_used": self._last_model,
                 "completed_at": now,
                 "confidence": confidence,
                 "error": error,
