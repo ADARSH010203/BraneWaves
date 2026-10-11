@@ -67,6 +67,17 @@ async def get_capabilities(current_user: dict = Depends(get_current_user)) -> di
         "fallback_models": settings.LLM_FALLBACK_ROUTING,
         "llm_configured": bool(settings.GROQ_API_KEY),
         "python_sandbox_configured": bool(settings.PYTHON_SANDBOX_URL),
+        "web_search_provider": settings.WEB_SEARCH_PROVIDER,
+        "web_search_configured_providers": [
+            provider
+            for provider, configured in (
+                ("brave", bool(settings.BRAVE_SEARCH_API_KEY)),
+                ("tavily", bool(settings.TAVILY_API_KEY)),
+                ("serper", bool(settings.SERPER_API_KEY)),
+                ("duckduckgo", True),
+            )
+            if configured
+        ],
         "max_task_budget_usd": settings.MAX_TASK_BUDGET_USD,
         "max_agent_budget_usd": settings.MAX_AGENT_BUDGET_USD,
         "max_steps_per_task": settings.MAX_STEPS_PER_TASK,
