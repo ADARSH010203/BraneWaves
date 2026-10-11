@@ -308,7 +308,21 @@ class TaskOrchestrator:
             return {"error": str(e)}
 
         # ── Phase 3: Report Generation ───────────────────────────────────
-        task_budget = (await db.tasks.find_one({"_id": self.task_id})).get("budget", {})
+        # Account deletion/cancellation may happen after the final execution
+        # batch. Re-check before starting the final Report LLM call.
+        try:
+            await self._check_cancellation()
+        except TaskCancelledException:
+            await self._cancel_task()
+            return {"status": "cancelled", "task_id": self.task_id}
+
+        current_task = await db.tasks.find_one(
+            {"_id": self.task_id, "user_id": self.user_id},
+            {"budget": 1},
+        )
+        if not current_task:
+            return {"status": "cancelled", "task_id": self.task_id}
+        task_budget = current_task.get("budget", {})
         max_usd = float(task_budget.get("max_usd", settings.MAX_TASK_BUDGET_USD))
         if self._total_cost >= max_usd:
             await self._fail_task(
@@ -776,17 +790,23 @@ class TaskOrchestrator:
                     raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
             else:
                 db = get_db()
-                task = await db.tasks.find_one({"_id": self.task_id}, {"status": 1})
-                if task and task.get("status") == TaskStatus.CANCELLED.value:
-                    raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+                task = await db.tasks.find_one(
+                    {"_id": self.task_id, "user_id": self.user_id},
+                    {"status": 1},
+                )
+                if not task or task.get("status") == TaskStatus.CANCELLED.value:
+                    raise TaskCancelledException(f"Task {self.task_id} is unavailable or cancelled")
         except TaskCancelledException:
             raise
         except Exception as e:
             # Redis unavailable — also check MongoDB status as fallback
             db = get_db()
-            task = await db.tasks.find_one({"_id": self.task_id}, {"status": 1})
-            if task and task.get("status") == TaskStatus.CANCELLED.value:
-                raise TaskCancelledException(f"Task {self.task_id} cancelled by user")
+            task = await db.tasks.find_one(
+                {"_id": self.task_id, "user_id": self.user_id},
+                {"status": 1},
+            )
+            if not task or task.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledException(f"Task {self.task_id} is unavailable or cancelled")
 
     async def _cancel_task(self) -> None:
         """Mark task as cancelled."""
