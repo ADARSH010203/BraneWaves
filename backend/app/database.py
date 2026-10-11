@@ -136,6 +136,11 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     # Reports
     await db.reports.create_index("task_id", unique=True)
 
+    # Report follow-up chat / retrieval
+    await db.report_chunks.create_index([("user_id", 1), ("report_id", 1)])
+    await db.report_chunks.create_index([("user_id", 1), ("task_id", 1)])
+    await db.report_chats.create_index([("user_id", 1), ("task_id", 1), ("created_at", 1)])
+
     # Usage Cost
     await db.usage_cost.create_index("user_id")
     await db.usage_cost.create_index("task_id")
