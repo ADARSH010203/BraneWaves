@@ -364,6 +364,12 @@ class BaseAgent(ABC):
     ) -> None:
         """Write a structured log entry to MongoDB."""
         db = get_db()
+        task_exists = await db.tasks.find_one(
+            {"_id": self.task_id, "user_id": self.user_id},
+            {"_id": 1},
+        )
+        if not task_exists:
+            return
         doc = {
             "_id": str(uuid.uuid4()),
             "user_id": self.user_id,
@@ -383,6 +389,12 @@ class BaseAgent(ABC):
     ) -> None:
         """Write cost entry to usage_cost collection."""
         db = get_db()
+        task_exists = await db.tasks.find_one(
+            {"_id": self.task_id, "user_id": self.user_id},
+            {"_id": 1},
+        )
+        if not task_exists:
+            return
         doc = {
             "_id": str(uuid.uuid4()),
             "user_id": self.user_id,
