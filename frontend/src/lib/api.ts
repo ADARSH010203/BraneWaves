@@ -4,6 +4,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 class ApiClient {
     private baseUrl: string;
+    private refreshPromise: Promise<boolean> | null = null;
 
     constructor(baseUrl: string) {
         this.baseUrl = baseUrl;
@@ -81,19 +82,25 @@ class ApiClient {
     }
 
     private async refreshToken(): Promise<boolean> {
-        try {
-            const res = await fetch(`${this.baseUrl}/auth/refresh`, {
-                method: "POST",
-                credentials: "include",
-            });
-            if (!res.ok) return false;
-            const data = await res.json();
-            localStorage.setItem("arc_access_token", data.access_token);
-            localStorage.removeItem("arc_refresh_token");
-            return true;
-        } catch {
-            return false;
-        }
+        if (this.refreshPromise) return this.refreshPromise;
+        this.refreshPromise = (async () => {
+            try {
+                const res = await fetch(`${this.baseUrl}/auth/refresh`, {
+                    method: "POST",
+                    credentials: "include",
+                });
+                if (!res.ok) return false;
+                const data = await res.json();
+                localStorage.setItem("arc_access_token", data.access_token);
+                localStorage.removeItem("arc_refresh_token");
+                return true;
+            } catch {
+                return false;
+            } finally {
+                this.refreshPromise = null;
+            }
+        })();
+        return this.refreshPromise;
     }
 
     // ── Auth ──────────────────────────────────────────────────────────
@@ -108,6 +115,23 @@ class ApiClient {
         return this.request<any>("/auth/login", {
             method: "POST",
             body: JSON.stringify({ email, password }),
+        });
+    }
+
+    async getMe() {
+        return this.request<any>("/auth/me");
+    }
+
+    async updateMe(name: string) {
+        return this.request<any>("/auth/me", {
+            method: "PATCH",
+            body: JSON.stringify({ name }),
+        });
+    }
+
+    async deleteMe() {
+        return this.request<{ success: boolean; message: string }>("/auth/me", {
+            method: "DELETE",
         });
     }
 
@@ -256,16 +280,33 @@ class ApiClient {
     }
 
     // ── Report Chat (FEAT-07) ────────────────────────────────────────
+    async getReportChat(taskId: string) {
+        return this.request<{ messages: Array<{ role: "user" | "assistant"; content: string; created_at: string }> }>(
+            `/tasks/${taskId}/chat`
+        );
+    }
+
     async chatWithReport(taskId: string, message: string) {
-        return this.request<{ reply: string }>(`/tasks/${taskId}/chat`, {
-            method: "POST",
-            body: JSON.stringify({ message }),
-        });
+        return this.request<{ reply: string; context_chunks: Array<{ chunk_id: string; index: number; score: number }> }>(
+            `/tasks/${taskId}/chat`,
+            {
+                method: "POST",
+                body: JSON.stringify({ message }),
+            }
+        );
     }
 
     // ── Analytics (FEAT-06) ──────────────────────────────────────────
     async getCostAnalytics() {
         return this.request<any>("/analytics/costs");
+    }
+
+    async getDashboardSummary() {
+        return this.request<any>("/analytics/summary");
+    }
+
+    async getCapabilities() {
+        return this.request<any>("/analytics/capabilities");
     }
 
     // ── Memory Graph (ARC Brain) ────────────────────────────────────
