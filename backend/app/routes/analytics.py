@@ -32,10 +32,13 @@ async def get_dashboard_summary(current_user: dict = Depends(get_current_user)) 
     active_tasks = await db.tasks.count_documents(
         {"user_id": user_id, "status": {"$in": ["planning", "running"]}}
     )
+    owned_task_ids = await db.tasks.distinct("_id", {"user_id": user_id})
     active_agents = await db.agent_runs.count_documents(
-        {"user_id": user_id, "status": "running"}
-    )
-    total_runs = await db.agent_runs.count_documents({"user_id": user_id})
+        {"task_id": {"$in": owned_task_ids}, "status": "running"}
+    ) if owned_task_ids else 0
+    total_runs = await db.agent_runs.count_documents(
+        {"task_id": {"$in": owned_task_ids}}
+    ) if owned_task_ids else 0
     total_spent = await _total_spent(db, user_id)
 
     quota = float(current_user.get("usage_quota_usd", 10.0))
