@@ -47,12 +47,21 @@ if settings.GITHUB_CLIENT_ID:
     )
 
 
+def _validate_browser_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    allowed = {value.rstrip("/") for value in settings.ALLOWED_ORIGINS}
+    if origin.rstrip("/") not in allowed:
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+
+
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
     response.set_cookie(
         key=REFRESH_COOKIE,
         value=refresh_token,
         httponly=True,
-        secure=settings.ENVIRONMENT == "production",
+        secure=settings.ENVIRONMENT == "production" or settings.REFRESH_COOKIE_SAMESITE == "none",
         samesite=settings.REFRESH_COOKIE_SAMESITE,
         max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
         path="/auth",
@@ -63,7 +72,7 @@ def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key=REFRESH_COOKIE,
         path="/auth",
-        secure=settings.ENVIRONMENT == "production",
+        secure=settings.ENVIRONMENT == "production" or settings.REFRESH_COOKIE_SAMESITE == "none",
         samesite=settings.REFRESH_COOKIE_SAMESITE,
     )
 
@@ -113,6 +122,7 @@ async def login(data: UserLogin, response: Response, db: DbDep):
     dependencies=[Depends(rate_limit_by_ip)],
 )
 async def refresh(request: Request, response: Response, db: DbDep):
+    _validate_browser_origin(request)
     refresh_token = request.cookies.get(REFRESH_COOKIE)
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh session missing")
@@ -131,6 +141,7 @@ async def refresh(request: Request, response: Response, db: DbDep):
     dependencies=[Depends(rate_limit_by_ip)],
 )
 async def logout(request: Request, response: Response, db: DbDep):
+    _validate_browser_origin(request)
     refresh_token = request.cookies.get(REFRESH_COOKIE)
     deleted = False
     if refresh_token:
