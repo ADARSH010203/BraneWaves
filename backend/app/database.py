@@ -147,6 +147,10 @@ async def _ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.usage_cost.create_index("user_id")
     await db.usage_cost.create_index("task_id")
 
+    # Audit Logs
+    await db.audit_logs.create_index([("user_id", 1), ("timestamp", -1)])
+    await db.audit_logs.create_index("action")
+
     # Prompt Versions
     await db.prompt_versions.create_index([("agent_type", 1), ("version", -1)])
 
