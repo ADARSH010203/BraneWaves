@@ -107,7 +107,7 @@ export default function BrainPage() {
       // Zoom
       const g = svg.append("g");
       svg.call(
-        d3.zoom().scaleExtent([0.3, 3]).on("zoom", (event: any) => {
+        d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 3]).on("zoom", (event) => {
           g.attr("transform", event.transform);
         })
       );
