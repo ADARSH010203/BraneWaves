@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_VECTOR_SEARCH: int = 15
     TOOL_TIMEOUT_CITATION_VERIFY: int = 20
 
+    # ── Web search ───────────────────────────────────────────────────────
+    WEB_SEARCH_PROVIDER: Literal["auto", "brave", "tavily", "serper", "duckduckgo"] = "auto"
+    BRAVE_SEARCH_API_KEY: str | None = None
+    TAVILY_API_KEY: str | None = None
+    SERPER_API_KEY: str | None = None
+
     # ── Isolated code execution ─────────────────────────────────────────
     # Point this at a separately isolated sandbox service. Local host subprocess
     # execution is intentionally disabled because it is not a security boundary.
