@@ -41,10 +41,17 @@ def configured_search_providers() -> list[str]:
 
 
 def search_provider_order() -> list[str]:
-    configured = configured_search_providers()
-    if settings.WEB_SEARCH_PROVIDER == "auto":
-        return configured
-    return [settings.WEB_SEARCH_PROVIDER]
+    """Choose providers for the selected cost policy.
+
+    Free mode never invokes Brave or Serper, even when those keys exist.
+    Tavily must be enrolled in its no-card Free plan for zero-charge usage.
+    """
+    mode = settings.WEB_SEARCH_PROVIDER
+    if mode == "free":
+        return (["tavily"] if settings.TAVILY_API_KEY else []) + ["duckduckgo"]
+    if mode == "auto":
+        return configured_search_providers()
+    return [mode]
 
 
 def _normalized(
@@ -107,8 +114,8 @@ async def _search_tavily(
         raise RuntimeError("TAVILY_API_KEY is not configured")
     response = await client.post(
         "https://api.tavily.com/search",
+        headers={"Authorization": f"Bearer {settings.TAVILY_API_KEY}"},
         json={
-            "api_key": settings.TAVILY_API_KEY,
             "query": query,
             "max_results": num_results,
             "search_depth": "basic",
@@ -369,8 +376,8 @@ class WebSearchTool(BaseTool):
                     logger.warning("Web search provider %s failed: %s", provider, exc)
                     errors.append(f"{provider}: {exc}")
 
-                # Explicit provider mode is fail-closed; auto mode may fall back.
-                if settings.WEB_SEARCH_PROVIDER != "auto":
+                # Explicit provider mode is fail-closed; free/auto allow fallback.
+                if settings.WEB_SEARCH_PROVIDER not in {"free", "auto"}:
                     break
 
         return {

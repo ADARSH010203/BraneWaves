@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     TOOL_TIMEOUT_CITATION_VERIFY: int = 20
 
     # ── Web search ───────────────────────────────────────────────────────
-    WEB_SEARCH_PROVIDER: Literal["auto", "brave", "tavily", "serper", "duckduckgo"] = "auto"
+    WEB_SEARCH_PROVIDER: Literal["free", "auto", "brave", "tavily", "serper", "duckduckgo"] = "free"
     BRAVE_SEARCH_API_KEY: str | None = None
     TAVILY_API_KEY: str | None = None
     SERPER_API_KEY: str | None = None

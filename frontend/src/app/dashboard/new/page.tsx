@@ -58,9 +58,9 @@ export default function NewTaskPage() {
         setMaxBudget(configuredMax);
         setBudget((current) => Math.min(current, configuredMax));
         setPythonSandboxConfigured(Boolean(caps.python_sandbox_configured));
-        const providers = caps.web_search_configured_providers || [];
+        const providers = caps.web_search_provider_order || caps.web_search_configured_providers || [];
         setWebSearchProvider(
-          caps.web_search_provider === "auto"
+          ["auto", "free"].includes(caps.web_search_provider)
             ? (providers[0] || "duckduckgo")
             : (caps.web_search_provider || "duckduckgo")
         );

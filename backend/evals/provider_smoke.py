@@ -13,10 +13,7 @@ from app.tools.web_search import WebSearchTool
 async def main() -> None:
     checks: dict[str, dict] = {}
 
-    has_production_search = any(
-        os.getenv(name)
-        for name in ("BRAVE_SEARCH_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY")
-    )
+    has_production_search = bool(os.getenv("TAVILY_API_KEY"))
     if has_production_search:
         web = await WebSearchTool().execute(
             {"query": "OpenAI artificial intelligence research", "num_results": 3, "language": "en"},
@@ -26,7 +23,7 @@ async def main() -> None:
             "ok": bool(
                 web.get("success")
                 and web.get("results")
-                and web.get("provider") != "duckduckgo"
+                and web.get("provider") == "tavily"
             ),
             "provider": web.get("provider"),
             "fallback_used": web.get("fallback_used"),
@@ -38,8 +35,8 @@ async def main() -> None:
             "ok": True,
             "skipped": True,
             "reason": (
-                "No Brave/Tavily/Serper repository secret configured. "
-                "DuckDuckGo remains a development fallback, not the production verification target."
+                "No TAVILY_API_KEY repository secret configured. "
+                "Free-mode DuckDuckGo fallback is available, but Tavily has not been live-verified."
             ),
         }
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from app.config import get_settings
 from app.database import get_db
 from app.deps import get_current_user
+from app.tools.web_search import search_provider_order
 
 router = APIRouter()
 settings = get_settings()
@@ -68,6 +69,7 @@ async def get_capabilities(current_user: dict = Depends(get_current_user)) -> di
         "llm_configured": bool(settings.GROQ_API_KEY),
         "python_sandbox_configured": bool(settings.PYTHON_SANDBOX_URL),
         "web_search_provider": settings.WEB_SEARCH_PROVIDER,
+        "web_search_provider_order": search_provider_order(),
         "web_search_configured_providers": [
             provider
             for provider, configured in (
